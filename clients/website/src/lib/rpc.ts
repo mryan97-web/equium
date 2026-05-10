@@ -137,3 +137,87 @@ export async function fetchRecentBlocks(limit = 12): Promise<MinedBlock[]> {
     return [];
   }
 }
+
+export interface LeaderboardEntry {
+  miner: string;
+  blocks: number;
+  totalRewardBase: number;
+  lastSeen: number;
+  lastHeight: number;
+}
+
+/**
+ * Aggregate the last N program signatures into a top-miners leaderboard.
+ * Sorts by block count desc, returns up to `take` rows.
+ */
+export async function fetchLeaderboard(
+  scan = 200,
+  take = 20
+): Promise<LeaderboardEntry[]> {
+  const blocks = await fetchAllMinedInRange(scan);
+  const map = new Map<string, LeaderboardEntry>();
+  for (const b of blocks) {
+    const existing = map.get(b.winner);
+    if (existing) {
+      existing.blocks += 1;
+      existing.totalRewardBase += b.reward;
+      if (b.ts > existing.lastSeen) existing.lastSeen = b.ts;
+      if (b.height > existing.lastHeight) existing.lastHeight = b.height;
+    } else {
+      map.set(b.winner, {
+        miner: b.winner,
+        blocks: 1,
+        totalRewardBase: b.reward,
+        lastSeen: b.ts,
+        lastHeight: b.height,
+      });
+    }
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.blocks - a.blocks)
+    .slice(0, take);
+}
+
+/** Scan up to `scan` recent program signatures and parse every mined block. */
+async function fetchAllMinedInRange(scan: number): Promise<MinedBlock[]> {
+  try {
+    const conn = readConnection();
+    const PROGRAM_ID = new PublicKey(idl.address);
+    const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, { limit: scan });
+    const out: MinedBlock[] = [];
+    const BATCH = 10;
+    for (let i = 0; i < sigs.length; i += BATCH) {
+      const batch = sigs.slice(i, i + BATCH).filter((s) => !s.err);
+      const txs = await Promise.all(
+        batch.map((s) =>
+          conn.getTransaction(s.signature, {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+          })
+        )
+      );
+      for (let j = 0; j < txs.length; j++) {
+        const tx = txs[j];
+        if (!tx) continue;
+        const sig = batch[j];
+        const logs = tx.meta?.logMessages ?? [];
+        const mineLog = logs.find((l) => l.includes("equium: mined block"));
+        if (!mineLog) continue;
+        const m = mineLog.match(/mined block (\d+) by ([\w]+) for (\d+)/);
+        if (!m) continue;
+        out.push({
+          sig: sig.signature,
+          height: Number(m[1]),
+          winner: m[2],
+          reward: Number(m[3]),
+          ts: sig.blockTime ?? 0,
+          newChallenge: "",
+        });
+      }
+    }
+    return out;
+  } catch (e) {
+    console.error("fetchAllMinedInRange failed", e);
+    return [];
+  }
+}

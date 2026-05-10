@@ -17,6 +17,8 @@ import { getAccount, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { detectTokenProgram, fetchConfig, getProgram, type EquiumConfig } from "@/lib/program";
 import { startMiner, type MinerHandle } from "@/lib/miner-engine";
 import { ShareCardModal } from "./ShareCardModal";
+import { ReferralBanner } from "./ReferralBanner";
+import { ReferralButton } from "./ReferralButton";
 
 interface LogLine {
   ts: number;
@@ -177,6 +179,8 @@ export function MineDashboard() {
 
   return (
     <div className="space-y-6 pb-12">
+      <ReferralBanner />
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div>
@@ -249,6 +253,11 @@ export function MineDashboard() {
 
           {/* Activity log */}
           <ActivityLog logs={logs} logsRef={logsRef} />
+
+          {/* Referral link */}
+          {wallet.publicKey && (
+            <ReferralButton pubkey={wallet.publicKey.toBase58()} />
+          )}
         </>
       )}
 

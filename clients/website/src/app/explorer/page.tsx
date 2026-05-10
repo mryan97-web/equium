@@ -1,14 +1,19 @@
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { ExplorerDashboard } from "@/components/ExplorerDashboard";
-import { fetchState, fetchRecentBlocks } from "@/lib/rpc";
+import {
+  fetchState,
+  fetchRecentBlocks,
+  fetchLeaderboard,
+} from "@/lib/rpc";
 
-export const revalidate = 0; // Always fetch fresh
+export const revalidate = 0;
 
 export default async function ExplorerPage() {
-  const [state, blocks] = await Promise.all([
+  const [state, blocks, leaderboard] = await Promise.all([
     fetchState(),
     fetchRecentBlocks(12),
+    fetchLeaderboard(200, 20),
   ]);
 
   return (
@@ -16,7 +21,11 @@ export default async function ExplorerPage() {
       <Navbar />
       <div className="pt-32 pb-16 px-6">
         <div className="max-w-6xl mx-auto">
-          <ExplorerDashboard initialState={state} initialBlocks={blocks} />
+          <ExplorerDashboard
+            initialState={state}
+            initialBlocks={blocks}
+            initialLeaderboard={leaderboard}
+          />
         </div>
       </div>
       <Footer />

@@ -169,6 +169,11 @@ const ShareCard = ({
   const uptime = stats.startedAt
     ? Math.max(0, Math.floor((Date.now() - stats.startedAt) / 1000))
     : 0;
+  const dateStr = new Date().toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
   return (
     <div
       ref={ref as any}
@@ -185,33 +190,70 @@ const ShareCard = ({
         marginBottom: -337,
       }}
     >
-      {/* Glow */}
+      {/* Background grain dots */}
       <div
         style={{
           position: "absolute",
-          top: -200,
-          left: -200,
+          inset: 0,
+          backgroundImage:
+            "radial-gradient(rgba(241,237,230,0.06) 1.5px, transparent 1.5px)",
+          backgroundSize: "32px 32px",
+          opacity: 0.7,
+        }}
+      />
+      {/* Big rose glow upper-left */}
+      <div
+        style={{
+          position: "absolute",
+          top: -260,
+          left: -180,
           width: 800,
           height: 800,
           borderRadius: "50%",
           background:
-            "radial-gradient(circle, rgba(232,90,141,0.35) 0%, transparent 60%)",
+            "radial-gradient(circle, rgba(232,90,141,0.45) 0%, transparent 62%)",
           filter: "blur(40px)",
         }}
       />
+      {/* Gold accent lower-right */}
       <div
         style={{
           position: "absolute",
-          bottom: -200,
-          right: -200,
-          width: 700,
-          height: 700,
+          bottom: -240,
+          right: -160,
+          width: 640,
+          height: 640,
           borderRadius: "50%",
           background:
-            "radial-gradient(circle, rgba(250,204,21,0.18) 0%, transparent 60%)",
+            "radial-gradient(circle, rgba(250,204,21,0.16) 0%, transparent 60%)",
           filter: "blur(40px)",
         }}
       />
+
+      {/* Decorative giant pickaxe (low-opacity background) */}
+      <svg
+        width="380"
+        height="380"
+        viewBox="0 0 24 24"
+        style={{
+          position: "absolute",
+          right: -50,
+          top: 80,
+          opacity: 0.07,
+          color: "#e85a8d",
+        }}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M14 4l6 6" />
+        <path d="M17 7l-5.5 5.5" />
+        <path d="M11.5 12.5L3 21" />
+        <path d="M11.5 12.5l3 3" />
+        <path d="M9.5 14.5l3 3" />
+      </svg>
 
       {/* Content */}
       <div
@@ -220,7 +262,7 @@ const ShareCard = ({
           height: "100%",
           display: "flex",
           flexDirection: "column",
-          padding: 64,
+          padding: 56,
           zIndex: 2,
         }}
       >
@@ -232,20 +274,39 @@ const ShareCard = ({
             justifyContent: "space-between",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <img
-              src="/logo.png"
-              width="64"
-              height="64"
-              style={{ borderRadius: 14 }}
-              alt=""
-            />
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <div
+              style={{
+                position: "relative",
+                width: 68,
+                height: 68,
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  inset: -8,
+                  borderRadius: 20,
+                  background:
+                    "radial-gradient(circle, rgba(232,90,141,0.5) 0%, transparent 70%)",
+                  filter: "blur(8px)",
+                }}
+              />
+              <img
+                src="/logo.png"
+                width="68"
+                height="68"
+                style={{ borderRadius: 16, position: "relative" }}
+                alt=""
+              />
+            </div>
             <div>
               <div
                 style={{
-                  fontSize: 30,
-                  fontWeight: 800,
-                  letterSpacing: "-0.02em",
+                  fontSize: 32,
+                  fontWeight: 900,
+                  letterSpacing: "-0.025em",
+                  lineHeight: 1,
                 }}
               >
                 Equium
@@ -253,10 +314,11 @@ const ShareCard = ({
               <div
                 style={{
                   fontFamily: "JetBrains Mono, monospace",
-                  fontSize: 14,
+                  fontSize: 13,
                   color: "#e85a8d",
-                  letterSpacing: "0.15em",
-                  fontWeight: 600,
+                  letterSpacing: "0.18em",
+                  fontWeight: 700,
+                  marginTop: 4,
                 }}
               >
                 $EQM · SOLANA
@@ -270,10 +332,14 @@ const ShareCard = ({
               color: "#8b8478",
               letterSpacing: "0.2em",
               textTransform: "uppercase",
-              fontWeight: 600,
+              fontWeight: 700,
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              gap: 10,
+              padding: "8px 14px",
+              border: "1px solid #232a36",
+              borderRadius: 999,
+              background: "rgba(17,20,26,0.6)",
             }}
           >
             <span
@@ -282,6 +348,7 @@ const ShareCard = ({
                 height: 8,
                 borderRadius: "50%",
                 background: "#6ee7b7",
+                boxShadow: "0 0 10px #6ee7b7",
               }}
             />
             Live · Devnet
@@ -289,31 +356,43 @@ const ShareCard = ({
         </div>
 
         {/* Big tagline */}
-        <div style={{ marginTop: 60 }}>
+        <div style={{ marginTop: 56 }}>
           <div
             style={{
               fontFamily: "JetBrains Mono, monospace",
               fontSize: 14,
               color: "#e85a8d",
-              letterSpacing: "0.2em",
+              letterSpacing: "0.24em",
               textTransform: "uppercase",
-              fontWeight: 600,
-              marginBottom: 12,
+              fontWeight: 700,
+              marginBottom: 16,
             }}
           >
             — I'm mining $EQM —
           </div>
           <div
             style={{
-              fontSize: 76,
+              fontSize: 84,
               fontWeight: 900,
-              letterSpacing: "-0.035em",
-              lineHeight: 1.05,
-              maxWidth: 900,
+              letterSpacing: "-0.038em",
+              lineHeight: 1,
+              maxWidth: 920,
             }}
           >
-            CPU mining is back.{" "}
-            <span style={{ color: "#e85a8d" }}>And I'm in.</span>
+            CPU mining is back.
+          </div>
+          <div
+            style={{
+              fontSize: 84,
+              fontWeight: 900,
+              letterSpacing: "-0.038em",
+              lineHeight: 1,
+              color: "#e85a8d",
+              fontStyle: "italic",
+              marginTop: 4,
+            }}
+          >
+            and I'm in.
           </div>
         </div>
 
@@ -323,7 +402,7 @@ const ShareCard = ({
             marginTop: "auto",
             display: "grid",
             gridTemplateColumns: "repeat(4, 1fr)",
-            gap: 16,
+            gap: 14,
           }}
         >
           <StatBlock
@@ -351,7 +430,7 @@ const ShareCard = ({
         {/* Footer */}
         <div
           style={{
-            marginTop: 24,
+            marginTop: 20,
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -362,8 +441,18 @@ const ShareCard = ({
             borderTop: "1px solid #232a36",
           }}
         >
-          <span>{shortPk(pubkey)}</span>
-          <span>equium.xyz/mine</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <span style={{ color: "#7dd3fc", fontWeight: 600 }}>
+              {shortPk(pubkey)}
+            </span>
+            <span style={{ color: "#4a4640" }}>·</span>
+            <span>{dateStr}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{ color: "#e85a8d", fontWeight: 700 }}>
+              equium.xyz/mine
+            </span>
+          </div>
         </div>
       </div>
     </div>

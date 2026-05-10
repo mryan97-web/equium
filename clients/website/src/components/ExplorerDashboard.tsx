@@ -1,16 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { EquiumState, MinedBlock } from "@/lib/rpc";
+import type { EquiumState, MinedBlock, LeaderboardEntry } from "@/lib/rpc";
 
 interface Props {
   initialState: EquiumState | null;
   initialBlocks: MinedBlock[];
+  initialLeaderboard: LeaderboardEntry[];
 }
 
-export function ExplorerDashboard({ initialState, initialBlocks }: Props) {
+type Tab = "blocks" | "leaderboard";
+
+export function ExplorerDashboard({
+  initialState,
+  initialBlocks,
+  initialLeaderboard,
+}: Props) {
   const [state, setState] = useState<EquiumState | null>(initialState);
   const [blocks, setBlocks] = useState<MinedBlock[]>(initialBlocks);
+  const [leaderboard, setLeaderboard] =
+    useState<LeaderboardEntry[]>(initialLeaderboard);
+  const [tab, setTab] = useState<Tab>("blocks");
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
 
   // Poll for fresh data every 10 seconds
@@ -24,6 +34,7 @@ export function ExplorerDashboard({ initialState, initialBlocks }: Props) {
         if (cancelled) return;
         if (data.state) setState(data.state);
         if (data.blocks) setBlocks(data.blocks);
+        if (data.leaderboard) setLeaderboard(data.leaderboard);
         setLastUpdated(Date.now());
       } catch {}
     };
@@ -167,18 +178,41 @@ export function ExplorerDashboard({ initialState, initialBlocks }: Props) {
         </div>
       </div>
 
-      {/* Recent blocks */}
+      {/* Tabbed section: Recent blocks / Leaderboard */}
       <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-panel)] overflow-hidden">
         <div className="flex items-center justify-between px-7 py-5 border-b border-[var(--color-border)]">
-          <h3 className="text-[20px] font-bold tracking-[-0.01em]">
-            Recent blocks
-          </h3>
+          <div className="flex items-center gap-1 rounded-full bg-[var(--color-bg)] border border-[var(--color-border)] p-1">
+            <button
+              onClick={() => setTab("blocks")}
+              className={`px-4 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                tab === "blocks"
+                  ? "bg-[var(--color-rose)] text-[var(--color-bg)]"
+                  : "text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]"
+              }`}
+            >
+              Recent blocks
+            </button>
+            <button
+              onClick={() => setTab("leaderboard")}
+              className={`px-4 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                tab === "leaderboard"
+                  ? "bg-[var(--color-rose)] text-[var(--color-bg)]"
+                  : "text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]"
+              }`}
+            >
+              Top miners
+            </button>
+          </div>
           <span className="text-[11px] font-mono text-[var(--color-fg-dim)]">
-            showing {blocks.length}
+            {tab === "blocks"
+              ? `showing ${blocks.length}`
+              : `${leaderboard.length} miners`}
           </span>
         </div>
 
-        {blocks.length === 0 ? (
+        {tab === "leaderboard" ? (
+          <LeaderboardList rows={leaderboard} />
+        ) : blocks.length === 0 ? (
           <div className="text-center py-16 text-[var(--color-fg-dim)]">
             No blocks mined yet — be the first.
           </div>
@@ -267,6 +301,109 @@ function AddrRow({ label, value }: { label: string; value: string }) {
         {label}
       </span>
       <span className="text-[var(--color-fg-soft)] break-all">{value}</span>
+    </div>
+  );
+}
+
+function LeaderboardList({ rows }: { rows: LeaderboardEntry[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="text-center py-16 text-[var(--color-fg-dim)]">
+        No miners yet — be the first.
+      </div>
+    );
+  }
+
+  const maxBlocks = Math.max(...rows.map((r) => r.blocks));
+  const medalFor = (i: number) =>
+    i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+
+  return (
+    <div className="divide-y divide-[var(--color-border)]">
+      {rows.map((row, i) => {
+        const medal = medalFor(i);
+        const widthPct = (row.blocks / maxBlocks) * 100;
+        return (
+          <div
+            key={row.miner}
+            className="px-7 py-5 grid grid-cols-12 gap-4 items-center hover:bg-[var(--color-bg-elev)]/50 transition-colors"
+          >
+            {/* Rank */}
+            <div className="col-span-2 md:col-span-1 flex items-center gap-2">
+              <span
+                className={`text-[18px] font-mono font-bold ${
+                  i === 0
+                    ? "text-[var(--color-gold)]"
+                    : i === 1
+                      ? "text-[var(--color-fg-soft)]"
+                      : i === 2
+                        ? "text-[var(--color-rose)]"
+                        : "text-[var(--color-fg-dim)]"
+                }`}
+              >
+                #{i + 1}
+              </span>
+              {medal && <span className="text-[18px]">{medal}</span>}
+            </div>
+
+            {/* Miner */}
+            <div className="col-span-10 md:col-span-4">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Miner
+              </div>
+              <a
+                href={`https://explorer.solana.com/address/${row.miner}?cluster=devnet`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[13px] font-mono text-[var(--color-teal)] hover:text-[var(--color-rose)] transition-colors break-all"
+              >
+                {shortPk(row.miner)}
+              </a>
+            </div>
+
+            {/* Blocks bar */}
+            <div className="col-span-6 md:col-span-3">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Blocks
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[18px] font-mono font-bold text-[var(--color-rose)]">
+                  {row.blocks}
+                </span>
+                <div className="flex-1 h-1.5 rounded-full bg-[var(--color-bg)] overflow-hidden ml-2">
+                  <div
+                    className="h-full rounded-full bg-[var(--color-rose)] transition-all"
+                    style={{ width: `${Math.max(widthPct, 4)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* EQM total */}
+            <div className="col-span-3 md:col-span-2">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Earned
+              </div>
+              <div className="text-[14px] font-mono font-bold text-[var(--color-gold)]">
+                {formatEqm(row.totalRewardBase)} EQM
+              </div>
+            </div>
+
+            {/* Last seen */}
+            <div className="col-span-3 md:col-span-2 text-right">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Last block
+              </div>
+              <div className="text-[13px] text-[var(--color-fg-soft)]">
+                #{row.lastHeight}
+              </div>
+              <div className="text-[11px] text-[var(--color-fg-dim)]">
+                {formatRelative(row.lastSeen * 1000)}
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
