@@ -14,6 +14,7 @@ import {
   detectTokenProgram,
   fetchConfig,
   hashUnderTarget,
+  submitAdvanceEmptyRound,
   type EquiumConfig,
 } from "./program";
 
@@ -257,6 +258,8 @@ export function startMiner(opts: MinerOptions): MinerHandle {
   // intervenes when config changes or things go wrong.
   (async () => {
     let lastHeight = -1n;
+    let lastHeightChangeAt = Date.now();
+    let lastAdvanceAttemptAt = 0;
 
     while (!stopped) {
       try {
@@ -280,11 +283,41 @@ export function startMiner(opts: MinerOptions): MinerHandle {
 
         if (cfg.blockHeight !== lastHeight) {
           lastHeight = cfg.blockHeight;
+          lastHeightChangeAt = Date.now();
+          lastAdvanceAttemptAt = 0;
           tryInRound = 0;
           cb.log(
             "info",
             `round #${cfg.blockHeight.toString()} opened — reward ${formatBase(cfg.currentEpochReward)} EQM`
           );
+        }
+
+        // Empty-round watchdog. If the chain hasn't moved in 75s, fire
+        // advance_empty_round; back off 30s between attempts so racing
+        // miners don't all spam fees.
+        const stallMs = Date.now() - lastHeightChangeAt;
+        const cooledDown = Date.now() - lastAdvanceAttemptAt >= 30_000;
+        if (stallMs >= 75_000 && cooledDown && !submitting) {
+          lastAdvanceAttemptAt = Date.now();
+          cb.log(
+            "info",
+            `round stalled ${(stallMs / 1000).toFixed(0)}s — calling advance_empty_round`
+          );
+          try {
+            const sig = await submitAdvanceEmptyRound(
+              connection,
+              program,
+              miner,
+              signTransaction
+            );
+            cb.log("ok", `↳ advanced empty round · ${sig.slice(0, 8)}…`);
+          } catch (e: any) {
+            const msg = String(e?.message ?? e);
+            const reason = msg.includes("RoundStillActive")
+              ? "another miner beat us to it"
+              : "couldn't advance";
+            cb.log("info", `↳ ${reason}`);
+          }
         }
 
         cb.onStatus("solving");

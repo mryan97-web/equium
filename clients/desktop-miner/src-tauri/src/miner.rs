@@ -217,6 +217,8 @@ fn run_mining_loop(
     let mut current_height: u64 = u64::MAX;
     let mut try_in_round: u32 = 0;
     let mut total_nonces: u64 = 0;
+    let mut last_height_change_at = Instant::now();
+    let mut last_advance_attempt_at: Option<Instant> = None;
 
     loop {
         if stop_flag.load(Ordering::SeqCst) {
@@ -252,6 +254,8 @@ fn run_mining_loop(
         if cfg.block_height != current_height {
             current_height = cfg.block_height;
             try_in_round = 0;
+            last_height_change_at = Instant::now();
+            last_advance_attempt_at = None;
             let _ = app.emit(
                 "miner://round",
                 RoundEvent {
@@ -272,6 +276,42 @@ fn run_mining_loop(
         }
 
         let miner_ata = derive_ata(&miner, &cfg.mint, &token_program_id);
+
+        // Empty-round watchdog. If chain progress has stalled, fire
+        // `advance_empty_round` so the next round can open. 75s wait + 30s
+        // cooldown matches the CLI miner.
+        let stall_for = last_height_change_at.elapsed();
+        let cooled_down = last_advance_attempt_at
+            .map(|t| t.elapsed() >= Duration::from_secs(30))
+            .unwrap_or(true);
+        if stall_for >= Duration::from_secs(75) && cooled_down {
+            emit_log(
+                &app,
+                "info",
+                format!(
+                    "round stalled {}s — calling advance_empty_round",
+                    stall_for.as_secs()
+                ),
+            );
+            last_advance_attempt_at = Some(Instant::now());
+            match submit_advance_empty_round(&rpc, &miner_kp, &program_id, &config_pda) {
+                Ok(sig) => emit_log(
+                    &app,
+                    "ok",
+                    format!("↳ advanced empty round · {}", short_sig(&sig)),
+                ),
+                Err(e) => {
+                    let reason = if e.to_string().contains("RoundStillActive") {
+                        "another miner beat us to it"
+                    } else {
+                        "couldn't advance"
+                    };
+                    emit_log(&app, "info", format!("↳ {reason}"));
+                }
+            }
+            // Next loop iteration will refetch config.
+            continue;
+        }
 
         let input = build_input(&cfg.current_challenge, &miner.to_bytes(), cfg.block_height);
         let mut rng = rand::thread_rng();
@@ -496,6 +536,42 @@ fn derive_ata(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
         mint,
         token_program,
     )
+}
+
+/// Permissionless instruction that closes a stalled round. Used by the
+/// empty-round watchdog above so chain progress doesn't get stuck if no
+/// miner finds a solution within the timeout window.
+fn submit_advance_empty_round(
+    rpc: &RpcClient,
+    caller_kp: &Keypair,
+    program_id: &Pubkey,
+    config_pda: &Pubkey,
+) -> anyhow::Result<String> {
+    let caller = caller_kp.pubkey();
+    let accounts = equium::accounts::AdvanceEmptyRound {
+        caller,
+        config: *config_pda,
+        slot_hashes: sysvar::slot_hashes::ID,
+    }
+    .to_account_metas(None);
+    let accounts: Vec<AccountMeta> = accounts
+        .into_iter()
+        .map(|m| AccountMeta {
+            pubkey: m.pubkey,
+            is_signer: m.is_signer,
+            is_writable: m.is_writable,
+        })
+        .collect();
+    let data = equium::instruction::AdvanceEmptyRound {}.data();
+    let ix = Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    };
+    let recent = rpc.get_latest_blockhash()?;
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&caller), &[caller_kp], recent);
+    let sig = rpc.send_and_confirm_transaction(&tx)?;
+    Ok(sig.to_string())
 }
 
 fn classify_submit_err(s: &str) -> &'static str {

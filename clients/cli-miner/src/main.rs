@@ -134,6 +134,13 @@ fn main() -> Result<()> {
     let mut try_in_round: u32 = 0;
     let mut total_nonces: u64 = 0;
     let mut total_reward_base: u64 = 0;
+    // Empty-round watchdog. If the chain doesn't move for ROUND_STALL_SECS
+    // seconds, the round has stalled — fire `advance_empty_round`. Cooldown
+    // prevents us from spamming tx fees if our call is racing other miners.
+    const ROUND_STALL_SECS: u64 = 75;
+    const ADVANCE_COOLDOWN_SECS: u64 = 30;
+    let mut last_height_change_at = Instant::now();
+    let mut last_advance_attempt_at: Option<Instant> = None;
 
     loop {
         let cfg = fetch_config(&rpc, &config_pda)
@@ -143,6 +150,8 @@ fn main() -> Result<()> {
         if cfg.block_height != current_height {
             current_height = cfg.block_height;
             try_in_round = 0;
+            last_height_change_at = Instant::now();
+            last_advance_attempt_at = None;
             println!();
             println!(
                 "   {}round #{}{}   {}reward {} EQM{}   {}target 0x{}…{}",
@@ -151,6 +160,42 @@ fn main() -> Result<()> {
                 C_DIM, hex::encode(&cfg.current_target[..4]), C_RESET,
             );
             println!("{}{}{}", C_GRAY, RULE, C_RESET);
+        }
+
+        // Empty-round watchdog: if the round has stalled, try to advance it
+        // ourselves. The on-chain instruction requires ROUND_TIMEOUT_SLOTS
+        // (≈60s) of slot-elapsed time; we wait a bit longer for safety, and
+        // back off ADVANCE_COOLDOWN_SECS between attempts so racing miners
+        // don't all spam fees.
+        let stall_for = last_height_change_at.elapsed();
+        let cooled_down = last_advance_attempt_at
+            .map(|t| t.elapsed() >= Duration::from_secs(ADVANCE_COOLDOWN_SECS))
+            .unwrap_or(true);
+        if stall_for >= Duration::from_secs(ROUND_STALL_SECS) && cooled_down {
+            println!(
+                "   {}round stalled {}s — calling advance_empty_round{}",
+                C_GRAY,
+                stall_for.as_secs(),
+                C_RESET
+            );
+            last_advance_attempt_at = Some(Instant::now());
+            match submit_advance_empty_round(&rpc, &miner_kp, &program_id, &config_pda) {
+                Ok(sig) => println!(
+                    "     {}↳ advanced empty round{}   {}sig {}{}",
+                    C_SAGE, C_RESET, C_GRAY, short_sig(&sig), C_RESET
+                ),
+                Err(e) => {
+                    let reason = if e.to_string().contains("RoundStillActive") {
+                        "another miner beat us to it"
+                    } else {
+                        "couldn't advance"
+                    };
+                    println!("     {}↳ {}{}", C_GRAY, reason, C_RESET);
+                }
+            }
+            // Next config fetch will pick up the new height (if our call
+            // landed). Skip the solve this iteration.
+            continue;
         }
 
         let solve_started = Instant::now();
@@ -417,6 +462,44 @@ fn submit_mine(
         &[miner_kp],
         recent,
     );
+    let sig = rpc.send_and_confirm_transaction(&tx)?;
+    Ok(sig.to_string())
+}
+
+/// Permissionless on-chain instruction that closes a stalled round. Callable
+/// after `ROUND_TIMEOUT_SLOTS` slots have elapsed since the round opened with
+/// no winning solution. The caller pays the tx fee; the unminted reward stays
+/// in the vault permanently.
+fn submit_advance_empty_round(
+    rpc: &RpcClient,
+    caller_kp: &Keypair,
+    program_id: &Pubkey,
+    config_pda: &Pubkey,
+) -> Result<String> {
+    let caller = caller_kp.pubkey();
+    let accounts = equium::accounts::AdvanceEmptyRound {
+        caller,
+        config: *config_pda,
+        slot_hashes: sysvar::slot_hashes::ID,
+    }
+    .to_account_metas(None);
+    let accounts: Vec<AccountMeta> = accounts
+        .into_iter()
+        .map(|m| AccountMeta {
+            pubkey: m.pubkey,
+            is_signer: m.is_signer,
+            is_writable: m.is_writable,
+        })
+        .collect();
+    let data = equium::instruction::AdvanceEmptyRound {}.data();
+    let ix = Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    };
+
+    let recent = rpc.get_latest_blockhash()?;
+    let tx = Transaction::new_signed_with_payer(&[ix], Some(&caller), &[caller_kp], recent);
     let sig = rpc.send_and_confirm_transaction(&tx)?;
     Ok(sig.to_string())
 }

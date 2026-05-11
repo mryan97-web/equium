@@ -139,6 +139,32 @@ export function buildMineTx(opts: {
     .transaction();
 }
 
+/**
+ * Fire the permissionless `advance_empty_round` instruction. Used by the
+ * miner watchdog when the chain stalls past `ROUND_TIMEOUT_SLOTS` without a
+ * winning solution.
+ */
+export async function submitAdvanceEmptyRound(
+  connection: Connection,
+  program: Program<any>,
+  caller: PublicKey,
+  signTransaction: (tx: Transaction) => Promise<Transaction>
+): Promise<string> {
+  const tx = await (program.methods as any)
+    .advanceEmptyRound()
+    .accounts({
+      caller,
+      config: CONFIG_PDA,
+      slotHashes: SYSVAR_SLOT_HASHES_PUBKEY,
+    })
+    .transaction();
+  const recent = await connection.getLatestBlockhash("confirmed");
+  tx.recentBlockhash = recent.blockhash;
+  tx.feePayer = caller;
+  const signed = await signTransaction(tx);
+  return connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+}
+
 /** Lex-compare two 32-byte big-endian uints. Returns true iff hash < target. */
 export function hashUnderTarget(hash: Uint8Array, target: Uint8Array): boolean {
   for (let i = 0; i < 32; i++) {
