@@ -58,6 +58,8 @@ export function MineDashboard() {
 
   const [config, setConfig] = useState<EquiumConfig | null>(null);
   const [solBalance, setSolBalance] = useState<number | null>(null);
+  const cpuCount = useCpuCount();
+  const [workerCount, setWorkerCount] = useWorkerCount(cpuCount);
   const [eqmBalance, setEqmBalance] = useState<bigint>(0n);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<
@@ -146,6 +148,7 @@ export function MineDashboard() {
       program,
       miner: pubkey,
       signTransaction: wallet.signTransaction,
+      workerCount,
       cb: {
         log,
         onConfig: setConfig,
@@ -218,6 +221,13 @@ export function MineDashboard() {
         running={running}
         status={status}
         config={config}
+      />
+
+      <CoresPicker
+        value={workerCount}
+        onChange={setWorkerCount}
+        max={cpuCount}
+        disabled={running}
       />
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -550,4 +560,117 @@ function formatEqm(base: bigint): string {
 function formatHashrate(h: number): string {
   if (h >= 1000) return `${(h / 1000).toFixed(2)} kH/s`;
   return `${h.toFixed(2)} H/s`;
+}
+
+const WORKER_COUNT_KEY = "equium:browser-workers";
+
+/** Reports the number of logical CPUs the browser exposes. Returns 0 until
+ * mount finishes (SSR has no `navigator`). */
+function useCpuCount(): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const hw =
+      typeof navigator !== "undefined" && navigator.hardwareConcurrency
+        ? navigator.hardwareConcurrency
+        : 4;
+    setN(hw);
+  }, []);
+  return n;
+}
+
+/** Persisted worker-count selection. Defaults to `max - 1` (leave one core
+ * for the OS / UI). Clamps to [1, max]. */
+function useWorkerCount(max: number): [number, (n: number) => void] {
+  const [n, setN] = useState(1);
+  // Initialize from localStorage once we know max
+  useEffect(() => {
+    if (max === 0) return;
+    try {
+      const raw = localStorage.getItem(WORKER_COUNT_KEY);
+      const stored = raw ? Number.parseInt(raw, 10) : NaN;
+      const initial =
+        Number.isFinite(stored) && stored >= 1
+          ? Math.min(stored, max)
+          : Math.max(1, max - 1);
+      setN(initial);
+    } catch {
+      setN(Math.max(1, max - 1));
+    }
+  }, [max]);
+  const set = useCallback(
+    (next: number) => {
+      const clamped = Math.max(1, Math.min(max || next, next));
+      setN(clamped);
+      try {
+        localStorage.setItem(WORKER_COUNT_KEY, String(clamped));
+      } catch {}
+    },
+    [max]
+  );
+  return [n, set];
+}
+
+function CoresPicker({
+  value,
+  onChange,
+  max,
+  disabled,
+}: {
+  value: number;
+  onChange: (n: number) => void;
+  max: number;
+  disabled: boolean;
+}) {
+  if (max === 0) return null;
+  const pct = max > 1 ? ((value - 1) / (max - 1)) * 100 : 100;
+  return (
+    <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-5 md:p-6">
+      <div className="flex items-start md:items-center justify-between gap-4 flex-col md:flex-row">
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-[var(--color-fg-dim)] mb-1 font-semibold">
+            CPU cores
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[28px] font-bold leading-none">{value}</span>
+            <span className="text-[14px] text-[var(--color-fg-dim)]">
+              of {max} available
+            </span>
+          </div>
+          <div className="text-[12px] text-[var(--color-fg-dim)] mt-1.5 max-w-md">
+            More cores = faster mining, but your laptop will get warmer and other
+            apps may feel sluggish. Default leaves one core free for the OS.
+            {disabled && (
+              <span className="block text-[var(--color-gold)] mt-1">
+                Stop mining to change this.
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3 w-full md:w-auto md:flex-shrink-0">
+          <button
+            onClick={() => onChange(value - 1)}
+            disabled={disabled || value <= 1}
+            className="w-10 h-10 rounded-full border border-[var(--color-border-bright)] flex items-center justify-center text-[20px] font-bold hover:bg-white/[0.04] disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Use fewer cores"
+          >
+            −
+          </button>
+          <div className="flex-1 md:w-48 h-2 rounded-full bg-[var(--color-bg)] border border-[var(--color-border)] overflow-hidden">
+            <div
+              className="h-full bg-[var(--color-rose)] transition-all"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <button
+            onClick={() => onChange(value + 1)}
+            disabled={disabled || value >= max}
+            className="w-10 h-10 rounded-full border border-[var(--color-border-bright)] flex items-center justify-center text-[20px] font-bold hover:bg-white/[0.04] disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label="Use more cores"
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

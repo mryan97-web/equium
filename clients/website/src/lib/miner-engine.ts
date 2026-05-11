@@ -69,7 +69,7 @@ interface SolverSlot {
 const DEFAULT_MAX_WORKERS = 8;
 
 function pickWorkerCount(override?: number): number {
-  if (override && override > 0) return Math.min(override, 16);
+  if (override && override > 0) return Math.min(override, 32);
   const hw =
     typeof navigator !== "undefined" && navigator.hardwareConcurrency
       ? navigator.hardwareConcurrency
