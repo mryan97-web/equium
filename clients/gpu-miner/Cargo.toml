@@ -1,0 +1,35 @@
+[package]
+name = "equium-gpu-miner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPU-accelerated CLI miner for Equium ($EQM). BLAKE2b leaf generation on GPU, Wagner solver on CPU."
+
+[[bin]]
+name = "equium-gpu-miner"
+path = "src/main.rs"
+
+[dependencies]
+equihash-core = { path = "../../crates/equihash-core", features = ["solver"] }
+equium = { path = "../../programs/equium", features = ["no-entrypoint"] }
+anchor-lang = { workspace = true }
+anchor-spl = { workspace = true }
+solana-sdk = "2.1"
+solana-client = "2.1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+rand = { workspace = true }
+hex = { workspace = true }
+log = "0.4"
+env_logger = "0.11"
+crossbeam-channel = "0.5"
+num_cpus = "1"
+blake2b_simd = "1"
+
+# GPU: wgpu picks the best available backend (Metal on macOS, Vulkan on
+# Linux/Windows, DX12 on Windows). bytemuck for safely casting structs
+# to byte slices for GPU buffers. pollster for blocking on async wgpu
+# calls without dragging in a full tokio runtime.
+wgpu = "24"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
