@@ -84,10 +84,31 @@ const hex = (bytes: number[] | Uint8Array): string =>
 // is fine for an explorer (block height moves every ~1min anyway).
 const CACHE_TTL_SEC = 90;
 
+/**
+ * Read the on-chain config snapshot from Redis. The indexer
+ * (`scripts/indexer.ts`) keeps this fresh — every tick it fetches the
+ * config PDA and writes a JSON snapshot here. The web app never
+ * touches chain for state.
+ *
+ * Returns null when Redis is empty or unreachable (degraded mode).
+ */
 export async function fetchState(): Promise<EquiumState | null> {
-  return cached("equium:state:v1", CACHE_TTL_SEC, fetchStateUncached);
+  const redis = getRedisClient();
+  if (!redis) return fetchStateUncached();
+  try {
+    const raw = await redis.get<EquiumState | string>("equium:state:v1");
+    if (!raw) return null;
+    if (typeof raw === "string") return JSON.parse(raw) as EquiumState;
+    return raw;
+  } catch (e) {
+    console.error("fetchState (redis) failed", e);
+    return null;
+  }
 }
 
+/** Chain-side state read. Kept as a fallback for environments without
+ * a running indexer + Redis (e.g. local dev against a fresh devnet).
+ * Production reads always go through `fetchState` above. */
 export async function fetchStateUncached(): Promise<EquiumState | null> {
   try {
     const conn = readConnection();
@@ -127,13 +148,31 @@ export interface MinedBlock {
 }
 
 /**
- * Fetch recent BlockMined events by scanning the program's recent signatures.
- * Returns up to `limit` mined blocks ordered newest-first.
+ * Read the most recently mined blocks straight from the indexer's
+ * Redis ZSET (score = height, member = JSON-serialized block). One
+ * Redis round-trip, no chain calls.
+ *
+ * Returns an empty array when Redis is empty or unreachable —
+ * `fetchRecentBlocksUncached` is kept around as a dev fallback only.
  */
 export async function fetchRecentBlocks(limit = 12): Promise<MinedBlock[]> {
-  return cached(`equium:blocks:${limit}:v1`, CACHE_TTL_SEC, () =>
-    fetchRecentBlocksUncached(limit)
-  );
+  const redis = getRedisClient();
+  if (!redis) return fetchRecentBlocksUncached(limit);
+  try {
+    const members = await redis.zrange<(string | MinedBlock)[]>(
+      "equium:blocks:by_height:v1",
+      0,
+      limit - 1,
+      { rev: true }
+    );
+    if (!members || members.length === 0) return [];
+    return members.map((m) =>
+      typeof m === "string" ? (JSON.parse(m) as MinedBlock) : (m as MinedBlock)
+    );
+  } catch (e) {
+    console.error("fetchRecentBlocks (redis) failed", e);
+    return [];
+  }
 }
 
 export async function fetchRecentBlocksUncached(

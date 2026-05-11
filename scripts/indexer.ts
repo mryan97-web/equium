@@ -45,11 +45,25 @@
  *   # scripts/indexer.service for a unit file template.
  */
 
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
+import { AnchorProvider, Program, setProvider } from "@coral-xyz/anchor";
 import { Redis } from "@upstash/redis";
 import * as dotenv from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
+
+// Reuse the website's IDL — single source of truth for the program
+// account layout. require() lets us pull a JSON file without needing
+// resolveJsonModule on the indexer's tsconfig.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const idl: any = require(path.resolve(
+  __dirname,
+  "..",
+  "clients",
+  "website",
+  "src",
+  "idl.json"
+));
 
 // ----- Config ---------------------------------------------------------
 
@@ -91,12 +105,78 @@ const K = {
   cursor: "equium:alltime:cursor:v1",
   meta: "equium:alltime:meta:v1",
   recent: "equium:recent:miner_blocks:v1",
+  // Read-side state owned by the indexer — web app reads these
+  // straight from Redis instead of hitting chain.
+  state: "equium:state:v1",
+  blocksByHeight: "equium:blocks:by_height:v1",
 };
 
 // ----- State + clients ------------------------------------------------
 
 const conn = new Connection(RPC_URL, "confirmed");
 const redis = new Redis({ url: REDIS_URL, token: REDIS_TOKEN });
+
+// Anchor Program for decoding the config PDA. A dummy keypair wallet
+// is fine — we only ever read.
+const program: Program<any> = (() => {
+  const wallet: any = {
+    publicKey: Keypair.generate().publicKey,
+    signTransaction: async (t: any) => t,
+    signAllTransactions: async (t: any) => t,
+  };
+  const provider = new AnchorProvider(conn, wallet, {
+    commitment: "confirmed",
+  });
+  setProvider(provider);
+  return new Program(idl as any, provider) as Program<any>;
+})();
+
+const [CONFIG_PDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from("equium-config")],
+  PROGRAM_ID
+);
+
+const hex = (bytes: number[] | Uint8Array): string =>
+  Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+/**
+ * Pull the on-chain config PDA, decode it, and write a JSON snapshot
+ * to Redis. The shape matches `EquiumState` in
+ * clients/website/src/lib/rpc.ts so the explorer can deserialize it
+ * unchanged.
+ */
+async function updateState(): Promise<void> {
+  try {
+    const cfg: any = await (program.account as any).equiumConfig.fetch(
+      CONFIG_PDA
+    );
+    const state = {
+      blockHeight: Number(cfg.blockHeight.toString()),
+      miningOpen: cfg.miningOpen,
+      currentTargetHex: hex(cfg.currentTarget),
+      currentChallenge: hex(cfg.currentChallenge),
+      epochReward: Number(cfg.currentEpochReward.toString()),
+      cumulativeMined: Number(cfg.cumulativeMined.toString()),
+      emptyRounds: Number(cfg.emptyRounds.toString()),
+      equihashN: cfg.equihashN,
+      equihashK: cfg.equihashK,
+      mint: cfg.mint.toBase58(),
+      lastWinner: cfg.lastWinner.toBase58(),
+      currentRoundOpenSlot: Number(cfg.currentRoundOpenSlot.toString()),
+      currentRoundOpenUnixTs: Number(cfg.currentRoundOpenUnixTs.toString()),
+      lastRetargetUnixTs: Number(cfg.lastRetargetUnixTs.toString()),
+      nextHalvingBlock: Number(cfg.nextHalvingBlock.toString()),
+      nextRetargetBlock: Number(cfg.nextRetargetBlock.toString()),
+    };
+    await redis.set(K.state, JSON.stringify(state));
+  } catch (e) {
+    // Don't log every miss — chain hiccups happen. Old state stays
+    // valid in Redis until the next successful poll.
+    log("warn", `updateState failed: ${(e as Error).message ?? e}`);
+  }
+}
 
 // Pretty hashrate-style formatter for the periodic status print.
 const fmtNum = (n: number) =>
@@ -165,6 +245,67 @@ async function indexBlock(b: MinedBlock): Promise<void> {
     score: b.ts,
     member: `${b.winner}:${b.height}`,
   });
+  // Full per-block record — the explorer's "recent blocks" feed
+  // reads this directly via ZREVRANGE.
+  await redis.zadd(K.blocksByHeight, {
+    score: b.height,
+    member: JSON.stringify(b),
+  });
+}
+
+/**
+ * One-time backfill for the blocks-by-height ZSET. Used when we deploy
+ * the indexer extension against an existing aggregator state — the
+ * HASHes are already populated but the new ZSET is empty. We walk
+ * every program signature and ZADD the full block records, skipping
+ * the aggregator writes (those are already correct).
+ */
+async function backfillBlocksByHeight(): Promise<number> {
+  log("info", "backfilling blocks_by_height ZSET from chain history");
+  const PAGE = 1000;
+  let before: string | undefined = undefined;
+  let totalBlocks = 0;
+  let pages = 0;
+
+  while (true) {
+    const opts: { limit: number; before?: string } = { limit: PAGE };
+    if (before) opts.before = before;
+    const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, opts);
+    if (sigs.length === 0) break;
+
+    const ordered = [...sigs].reverse();
+    for (let i = 0; i < ordered.length; i += BATCH_SIZE) {
+      const batch = ordered.slice(i, i + BATCH_SIZE).filter((s) => !s.err);
+      const blocks = (
+        await Promise.all(
+          batch.map(async (s) => {
+            try {
+              return await parseMinedBlock(s.signature);
+            } catch {
+              return null;
+            }
+          })
+        )
+      ).filter((b): b is MinedBlock => b !== null);
+      for (const b of blocks) {
+        await redis.zadd(K.blocksByHeight, {
+          score: b.height,
+          member: JSON.stringify(b),
+        });
+        totalBlocks++;
+      }
+    }
+    pages++;
+    log(
+      "info",
+      `blocks_by_height page ${pages}: ${totalBlocks} entries`
+    );
+    if (sigs.length < PAGE) break;
+    before = sigs[sigs.length - 1].signature;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  log("ok", `blocks_by_height backfill complete: ${totalBlocks} entries`);
+  return totalBlocks;
 }
 
 /**
@@ -288,6 +429,11 @@ async function wipeAggregator(): Promise<void> {
  * blocks. Updates cursor to the newest signature processed.
  */
 async function tick(): Promise<{ scanned: number; indexed: number }> {
+  // Always refresh the on-chain state snapshot — block height, target,
+  // last winner, etc. change every round so this is the freshness
+  // floor for the explorer.
+  await updateState();
+
   const cursor = await redis.get<string>(K.cursor).catch(() => null);
   const opts: { limit: number; until?: string } = { limit: 1000 };
   if (cursor) opts.until = cursor;
@@ -321,14 +467,31 @@ async function main() {
     log("ok", `resuming from cursor ${cursor.slice(0, 8)}…`);
   }
 
+  // Schema migration: if blocks_by_height is empty but the aggregator
+  // has historical data (we just deployed the new code against an
+  // existing Redis), walk signatures once to seed the ZSET. Pure
+  // read-side migration — never touches the aggregator HASHes so it's
+  // safe to run alongside an already-populated state.
+  const blocksZcard = await redis.zcard(K.blocksByHeight).catch(() => 0);
+  const totalAggBlocks = await redis.hlen(K.miners).catch(() => 0);
+  if (blocksZcard === 0 && totalAggBlocks > 0 && !REINDEX) {
+    await backfillBlocksByHeight();
+  }
+
+  // Seed the state snapshot before entering the loop so the explorer
+  // has something to read immediately.
+  await updateState();
+
   // Print a one-line summary so the operator can sanity-check.
   const totalMiners = await redis
     .hlen(K.miners)
     .catch(() => 0);
   const rankCount = await redis.zcard(K.rank).catch(() => 0);
+  const blocksCount = await redis.zcard(K.blocksByHeight).catch(() => 0);
   log(
     "ok",
-    `index ready · ${fmtNum(totalMiners)} unique miners · ${fmtNum(rankCount)} rank entries`
+    `index ready · ${fmtNum(totalMiners)} unique miners · ` +
+      `${fmtNum(rankCount)} rank entries · ${fmtNum(blocksCount)} blocks`
   );
 
   // Steady-state loop.

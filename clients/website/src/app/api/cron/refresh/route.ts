@@ -11,20 +11,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { warm } from "@/lib/cache";
 import {
-  fetchStateUncached,
-  fetchRecentBlocksUncached,
   fetchLeaderboardUncached,
   fetchHashrateSeriesUncached,
   fetchAllTimeLeaderboardUncached,
 } from "@/lib/rpc";
 
-// NOTE: this route no longer calls `updateAllTimeAggregator`. The
-// all-time miner index is owned by the standalone indexer process
-// (scripts/indexer.ts) running continuously on the server — Vercel
-// cron is unreliable for our use case (Hobby tier rate-limits, cold
-// starts) and a server-side indexer can walk the entire history from
-// genesis on first run. Cron is reduced to pre-warming the read-side
-// caches so /api/state stays snappy.
+// The indexer (scripts/indexer.ts) is the source of truth for state +
+// recent blocks + all-time stats — those keys are written directly by
+// the daemon and the explorer reads them from Redis with no further
+// caching layer. This route is reduced to warming the few derived
+// views that still aggregate on the read side (leaderboard, hashrate
+// series, all-time top-50) so /api/state stays snappy when many
+// users hit it simultaneously.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,16 +45,14 @@ export async function GET(req: NextRequest) {
   const TTL = 90;
   const t0 = Date.now();
   const results = await Promise.allSettled([
-    warm("equium:state:v1", TTL, fetchStateUncached),
-    warm("equium:blocks:12:v1", TTL, () => fetchRecentBlocksUncached(12)),
     warm("equium:leaderboard:200:20:v1", TTL, () =>
       fetchLeaderboardUncached(200, 20)
     ),
     warm("equium:hashrate:200:30:v1", TTL, () =>
       fetchHashrateSeriesUncached(200, 30)
     ),
-    // Read-side: re-render the all-time top-50 from whatever the
-    // indexer has populated. We don't write any new history here.
+    // Pre-render the all-time top-50 from whatever the indexer has
+    // populated. No history is written here.
     warm(
       "equium:alltime:top:50:v1",
       TTL,
@@ -67,10 +63,8 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     elapsed_ms: Date.now() - t0,
-    state: results[0].status,
-    blocks: results[1].status,
-    leaderboard: results[2].status,
-    hashrate: results[3].status,
-    alltime_top: results[4].status,
+    leaderboard: results[0].status,
+    hashrate: results[1].status,
+    alltime_top: results[2].status,
   });
 }
