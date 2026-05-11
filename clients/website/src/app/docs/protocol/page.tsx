@@ -218,14 +218,17 @@ export default function Page() {
       </P>
       <P>
         v0.1 was hybrid (GPU did BLAKE2b leaf generation, CPU ran
-        Wagner). v0.2 (now shipping for early testers behind{" "}
+        Wagner). v0.2 (shipping for early testers behind{" "}
         <Code>--full-gpu</Code>) moves the full Wagner pipeline onto
         the GPU — all five rounds plus solution scan run on-device,
         with only tx submission left on CPU. The algorithm is
         validated round-by-round against the CPU reference solver at
         full (96, 5) width; the WGSL shaders match the validated Rust
-        port byte-for-byte. v0.3 brings the same shader to the
-        browser miner via WebGPU. Source at{" "}
+        port byte-for-byte. v0.3 ships the same{" "}
+        <Code>leaves.wgsl</Code> kernel in the browser miner via
+        WebGPU — when your browser exposes <Code>navigator.gpu</Code>,
+        leaves are generated on-device and only the CPU Wagner pass
+        runs in workers. Source at{" "}
         <a
           href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
           target="_blank"

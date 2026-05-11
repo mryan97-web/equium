@@ -17,6 +17,7 @@ import {
   submitAdvanceEmptyRound,
   type EquiumConfig,
 } from "./program";
+import { WebGPULeaves } from "./webgpu-leaves";
 
 export interface MinerCallbacks {
   log: (level: "info" | "ok" | "err", msg: string) => void;
@@ -100,16 +101,84 @@ export function startMiner(opts: MinerOptions): MinerHandle {
     `solver pool: ${workerCount} worker${workerCount === 1 ? "" : "s"}`
   );
 
+  // v0.3 hybrid path: probe WebGPU. If a device comes up we'll
+  // generate leaves on the GPU per nonce and ship them to workers for
+  // the cheap Wagner pass. If `init()` returns null (no navigator.gpu,
+  // adapter request failed, etc.) we silently fall back to the legacy
+  // pure-WASM path.
+  let webgpu: WebGPULeaves | null = null;
+  // Serializes GPU dispatches across workers — multiple `generate()`
+  // calls on one device would race the params buffer + staging
+  // mapAsync otherwise.
+  let gpuQueue: Promise<void> = Promise.resolve();
+  (async () => {
+    try {
+      webgpu = await WebGPULeaves.init();
+      if (webgpu) {
+        cb.log(
+          "ok",
+          `GPU acceleration enabled · ${webgpu.info.adapterName}${
+            webgpu.info.isFallback ? " (software fallback)" : ""
+          }`
+        );
+      } else {
+        cb.log(
+          "info",
+          "GPU unavailable — running CPU-only (WebGPU not supported in this browser)"
+        );
+      }
+    } catch (e) {
+      cb.log(
+        "info",
+        `GPU init failed — falling back to CPU: ${truncate(String(e), 80)}`
+      );
+      webgpu = null;
+    }
+  })();
+
   const stop = () => {
     stopped = true;
     for (const slot of slots) {
       slot.worker.terminate();
     }
+    if (webgpu) {
+      try {
+        webgpu.destroy();
+      } catch {}
+      webgpu = null;
+    }
     cb.onStatus("stopped");
   };
 
+  /** Run one leaves-generation pass through the WebGPU device,
+   *  serialized so concurrent worker requests don't race the params
+   *  buffer or stagingBuf.mapAsync. */
+  const runGpuLeaves = async (
+    input: Uint8Array,
+    nonce: Uint8Array
+  ): Promise<Uint8Array> => {
+    const prev = gpuQueue;
+    let release: () => void = () => {};
+    gpuQueue = new Promise<void>((r) => {
+      release = r;
+    });
+    await prev;
+    try {
+      return await webgpu!.generate(input, nonce);
+    } finally {
+      release();
+    }
+  };
+
   /** Dispatch a single solve job to a specific worker. The handler runs the
-   * full lifecycle: receive → target-check → maybe submit → re-dispatch.  */
+   * full lifecycle: receive → target-check → maybe submit → re-dispatch.
+   *
+   * Two paths:
+   *   - GPU + worker (hybrid): main thread generates leaves on the GPU,
+   *     ships them to the worker, worker runs Wagner only.
+   *   - Worker-only: worker does both leaves and Wagner via the legacy
+   *     `solve_block` WASM export. Used when WebGPU isn't available.
+   */
   const dispatchTo = (slot: SolverSlot, cfg: EquiumConfig) => {
     if (stopped) return;
     slot.busy = true;
@@ -240,6 +309,58 @@ export function startMiner(opts: MinerOptions): MinerHandle {
     };
 
     slot.worker.addEventListener("message", onMessage);
+
+    if (webgpu) {
+      // Hybrid path: generate leaves on the GPU for one random nonce,
+      // hand them to the worker for Wagner. Per-nonce cost is small on
+      // CPU (~ms) so workers re-dispatch frequently; the GPU is the
+      // bottleneck and is shared via runGpuLeaves's lock.
+      void (async () => {
+        const nonce = new Uint8Array(32);
+        crypto.getRandomValues(nonce);
+        const inputBlock = buildInputBlock(
+          cfg.currentChallenge,
+          miner.toBytes(),
+          cfg.blockHeight
+        );
+        let leaves: Uint8Array;
+        try {
+          leaves = await runGpuLeaves(inputBlock, nonce);
+        } catch (err) {
+          // GPU dispatch failed (device lost, OOM, driver hiccup).
+          // Surface as a normal "error" response so the worker
+          // dispatch loop re-tries after backoff.
+          slot.worker.removeEventListener("message", onMessage);
+          slot.busy = false;
+          cb.log(
+            "err",
+            `gpu leaves failed: ${truncate(String((err as Error)?.message ?? err), 80)}`
+          );
+          setTimeout(() => {
+            if (!stopped && currentConfig) dispatchTo(slot, currentConfig);
+          }, 500);
+          return;
+        }
+        if (stopped) return;
+        slot.worker.postMessage(
+          {
+            type: "solve-with-leaves",
+            jobId,
+            n: cfg.equihashN,
+            k: cfg.equihashK,
+            input: inputBlock,
+            nonce,
+            leaves,
+          },
+          // Transferable: don't copy the 1.5 MB leaves buffer into the
+          // worker — hand it over.
+          [leaves.buffer]
+        );
+      })();
+      return;
+    }
+
+    // CPU-only path: worker generates leaves + runs Wagner per attempt.
     slot.worker.postMessage({
       type: "solve",
       jobId,

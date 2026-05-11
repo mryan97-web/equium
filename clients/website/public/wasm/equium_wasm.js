@@ -119,6 +119,38 @@ export function solve_block(n, k, challenge, miner, height, max_attempts, seed) 
 }
 
 /**
+ * WebGPU hybrid path (v0.3): the host generates leaves on the GPU,
+ * then hands them in here so the CPU does only the cheap Wagner +
+ * validation pass per nonce. `leaves` must be exactly
+ * `n_init_leaves(n, k) * (n/8)` bytes, tightly packed (the same
+ * layout the native `gpu-miner` Wagner pipeline expects).
+ *
+ * Returns the compressed solution indices, or `null` if this nonce
+ * produces no valid solution.
+ * @param {number} n
+ * @param {number} k
+ * @param {Uint8Array} input
+ * @param {Uint8Array} nonce
+ * @param {Uint8Array} leaves
+ * @returns {Uint8Array | undefined}
+ */
+export function try_nonce_with_leaves(n, k, input, nonce, leaves) {
+    const ptr0 = passArray8ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(nonce, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(leaves, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.try_nonce_with_leaves(n, k, ptr0, len0, ptr1, len1, ptr2, len2);
+    let v4;
+    if (ret[0] !== 0) {
+        v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v4;
+}
+
+/**
  * @returns {string}
  */
 export function version() {

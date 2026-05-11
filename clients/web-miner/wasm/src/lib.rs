@@ -4,7 +4,7 @@
 //! so the solve loop is deterministic + replayable for debugging.
 
 use equihash_core::challenge::{build_input, I_LEN};
-use equihash_core::solver::solve;
+use equihash_core::solver::{solve, try_nonce_with_leaves as core_try_nonce_with_leaves};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -109,6 +109,32 @@ pub fn build_input_block(challenge: &[u8], miner: &[u8], height: u64) -> Option<
     let mut m = [0u8; 32];
     m.copy_from_slice(miner);
     Some(build_input(&c, &m, height).to_vec())
+}
+
+/// WebGPU hybrid path (v0.3): the host generates leaves on the GPU,
+/// then hands them in here so the CPU does only the cheap Wagner +
+/// validation pass per nonce. `leaves` must be exactly
+/// `n_init_leaves(n, k) * (n/8)` bytes, tightly packed (the same
+/// layout the native `gpu-miner` Wagner pipeline expects).
+///
+/// Returns the compressed solution indices, or `null` if this nonce
+/// produces no valid solution.
+#[wasm_bindgen]
+pub fn try_nonce_with_leaves(
+    n: u32,
+    k: u32,
+    input: &[u8],
+    nonce: &[u8],
+    leaves: &[u8],
+) -> Option<Vec<u8>> {
+    if input.len() != I_LEN || nonce.len() != 32 {
+        return None;
+    }
+    let mut i_arr = [0u8; I_LEN];
+    i_arr.copy_from_slice(input);
+    let mut n_arr = [0u8; 32];
+    n_arr.copy_from_slice(nonce);
+    core_try_nonce_with_leaves(n, k, &i_arr, &n_arr, leaves)
 }
 
 #[wasm_bindgen]

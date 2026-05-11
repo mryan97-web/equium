@@ -38,6 +38,18 @@ export function solution_hash(soln_indices: Uint8Array, input: Uint8Array): Uint
  */
 export function solve_block(n: number, k: number, challenge: Uint8Array, miner: Uint8Array, height: bigint, max_attempts: number, seed: Uint8Array): EquihashSolution | undefined;
 
+/**
+ * WebGPU hybrid path (v0.3): the host generates leaves on the GPU,
+ * then hands them in here so the CPU does only the cheap Wagner +
+ * validation pass per nonce. `leaves` must be exactly
+ * `n_init_leaves(n, k) * (n/8)` bytes, tightly packed (the same
+ * layout the native `gpu-miner` Wagner pipeline expects).
+ *
+ * Returns the compressed solution indices, or `null` if this nonce
+ * produces no valid solution.
+ */
+export function try_nonce_with_leaves(n: number, k: number, input: Uint8Array, nonce: Uint8Array, leaves: Uint8Array): Uint8Array | undefined;
+
 export function version(): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -51,6 +63,7 @@ export interface InitOutput {
     readonly solve_block: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: number, j: number) => number;
     readonly solution_hash: (a: number, b: number, c: number, d: number) => [number, number];
     readonly build_input_block: (a: number, b: number, c: number, d: number, e: bigint) => [number, number];
+    readonly try_nonce_with_leaves: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly version: () => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
