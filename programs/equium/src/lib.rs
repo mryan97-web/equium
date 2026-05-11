@@ -20,6 +20,12 @@ use crate::state::{EquiumConfig, CONFIG_SEED, VAULT_SEED};
 
 declare_id!("ZKGMUfxiRCXFPnqz9zgqAnuqJy15jk7fKbR4o6FuEQM");
 
+/// The only pubkey allowed to call `initialize` and (until renounced)
+/// `fund_vault`, `set_target`, and `renounce_admin`. Hardcoding this
+/// closes the deploy-race window: an attacker monitoring the mempool
+/// can no longer front-run the deployer's `initialize` to claim admin.
+pub const EXPECTED_ADMIN: Pubkey = pubkey!("AgbSti5LyTfYHVytBhNP8HHz3Ko7bZfSvnsm9cJAEQM");
+
 #[program]
 pub mod equium {
     use super::*;
@@ -51,10 +57,6 @@ pub mod equium {
     pub fn set_target(ctx: Context<SetTarget>, new_target: [u8; 32]) -> Result<()> {
         instructions::set_target::handler(ctx, new_target)
     }
-
-    pub fn update_metadata(ctx: Context<UpdateMetadata>, new_uri: String) -> Result<()> {
-        instructions::update_metadata::handler(ctx, new_uri)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +77,7 @@ pub struct InitializeArgs {
 
 #[derive(Accounts)]
 pub struct Initialize<'info> {
-    #[account(mut)]
+    #[account(mut, address = EXPECTED_ADMIN @ EquiumError::NotAdmin)]
     pub admin: Signer<'info>,
 
     #[account(
@@ -233,14 +235,3 @@ pub struct SetTarget<'info> {
     pub config: Account<'info, EquiumConfig>,
 }
 
-#[derive(Accounts)]
-pub struct UpdateMetadata<'info> {
-    pub admin: Signer<'info>,
-
-    #[account(
-        seeds = [CONFIG_SEED],
-        bump = config.config_bump,
-        has_one = admin @ EquiumError::NotAdmin,
-    )]
-    pub config: Account<'info, EquiumConfig>,
-}

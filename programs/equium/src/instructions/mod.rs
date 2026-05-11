@@ -4,4 +4,3 @@ pub mod initialize;
 pub mod mine;
 pub mod renounce_admin;
 pub mod set_target;
-pub mod update_metadata;

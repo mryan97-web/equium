@@ -539,59 +539,6 @@
           }
         }
       ]
-    },
-    {
-      "name": "update_metadata",
-      "discriminator": [
-        170,
-        182,
-        43,
-        239,
-        97,
-        78,
-        225,
-        186
-      ],
-      "accounts": [
-        {
-          "name": "admin",
-          "signer": true,
-          "relations": [
-            "config"
-          ]
-        },
-        {
-          "name": "config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  101,
-                  113,
-                  117,
-                  105,
-                  117,
-                  109,
-                  45,
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        }
-      ],
-      "args": [
-        {
-          "name": "new_uri",
-          "type": "string"
-        }
-      ]
     }
   ],
   "accounts": [

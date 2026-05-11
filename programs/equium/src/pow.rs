@@ -25,8 +25,12 @@ pub fn read_recent_slot_hash(account: &AccountInfo) -> Result<[u8; 32]> {
         return Err(error!(EquiumError::BadSlotHashes));
     }
 
-    // count is bytes 0..8 (we don't strictly need it; we just want the first entry)
-    let _count = u64::from_le_bytes(data[0..8].try_into().unwrap());
+    // SlotHashes always has 512 entries on a live cluster, but defending
+    // against a zeroed sysvar is cheap.
+    let count = u64::from_le_bytes(data[0..8].try_into().unwrap());
+    if count == 0 {
+        return Err(error!(EquiumError::BadSlotHashes));
+    }
 
     // First entry: bytes 8..16 = slot, bytes 16..48 = hash
     let mut hash = [0u8; 32];
