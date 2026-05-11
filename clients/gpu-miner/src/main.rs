@@ -40,6 +40,7 @@ use std::time::{Duration, Instant};
 
 mod gpu;
 mod shader_ref;
+mod wagner;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Equium GPU miner")]
@@ -72,9 +73,25 @@ enum Cmd {
         #[arg(long, default_value_t = 200u32)]
         iterations: u32,
     },
-    /// Hybrid GPU/CPU mining. GPU does BLAKE2b leaf generation, CPU
-    /// runs Wagner rounds, off-chain target check + tx submit happen
-    /// per-attempt.
+    /// v0.2 sanity check: run the full GPU pipeline (leaves + Wagner +
+    /// solution scan) and the equivalent CPU reference on the same
+    /// nonces, and assert they agree. If this passes, `--full-gpu`
+    /// mining is safe on your driver.
+    VerifyRounds {
+        /// How many nonces to try. Each runs both GPU and CPU
+        /// pipelines end-to-end. Default is small because the CPU
+        /// reference is unoptimized (~3s/nonce in release).
+        #[arg(long, default_value_t = 4u32)]
+        nonces: u32,
+    },
+    /// Benchmark the full GPU Wagner pipeline (leaves + 5 rounds +
+    /// solution scan) at full (96, 5) width.
+    BenchWagner {
+        #[arg(long, default_value_t = 50u32)]
+        iterations: u32,
+    },
+    /// Mine. Defaults to v0.1 hybrid (GPU leaves + CPU Wagner). Pass
+    /// `--full-gpu` to use the v0.2 all-on-GPU pipeline.
     Mine {
         /// RPC endpoint. Bring your own — public mainnet rate-limits.
         #[arg(long, default_value = "https://api.mainnet-beta.solana.com")]
@@ -92,10 +109,17 @@ enum Cmd {
         #[arg(long, default_value_t = 1_400_000u32)]
         cu_limit: u32,
 
-        /// CPU worker threads. Default = num_cpus. Each thread requests
-        /// leaves from the GPU and runs its own Wagner pass.
+        /// CPU worker threads (v0.1 hybrid path only). Default =
+        /// num_cpus. Each thread requests leaves from the GPU and runs
+        /// its own Wagner pass.
         #[arg(long, short = 't', default_value_t = 0)]
         threads: usize,
+
+        /// Use the v0.2 full-GPU pipeline. Leaves + Wagner + solution
+        /// scan all run on the GPU; the CPU only manages tx submission.
+        /// Run `verify-rounds` once on your machine before enabling.
+        #[arg(long, default_value_t = false)]
+        full_gpu: bool,
     },
 }
 
@@ -107,13 +131,16 @@ fn main() -> Result<()> {
         Cmd::Verify { leaves } => verify(leaves),
         Cmd::VerifyCpu { leaves } => verify_cpu(leaves),
         Cmd::Bench { iterations } => bench(iterations),
+        Cmd::VerifyRounds { nonces } => verify_rounds(nonces),
+        Cmd::BenchWagner { iterations } => bench_wagner(iterations),
         Cmd::Mine {
             rpc_url,
             keypair,
             max_blocks,
             cu_limit,
             threads,
-        } => mine(rpc_url, keypair, max_blocks, cu_limit, threads),
+            full_gpu,
+        } => mine(rpc_url, keypair, max_blocks, cu_limit, threads, full_gpu),
     }
 }
 
@@ -279,6 +306,124 @@ fn bench(iterations: u32) -> Result<()> {
 }
 
 // ============================================================================
+// v0.2 full-GPU verification + bench
+// ============================================================================
+
+/// Sanity-check the full-GPU Wagner pipeline by running it alongside
+/// the CPU reference (shader_ref::wagner_full) on the same nonces and
+/// asserting they find the same solutions. Solutions are sparse, so
+/// most nonces produce `[]` from both sides — what we're testing is
+/// that *whenever* the CPU finds a solution, the GPU finds it too,
+/// and vice versa.
+fn verify_rounds(n_nonces: u32) -> Result<()> {
+    let wagner = wagner::GpuWagner::new()?;
+    println!("GPU backend: {}", wagner.adapter_name);
+    println!(
+        "verifying {} nonce(s) — CPU reference is unoptimized, expect ~few seconds each\n",
+        n_nonces
+    );
+
+    let (input, base_nonce) = fixed_test_input();
+    let mut disagreements = 0usize;
+
+    for n in 0..n_nonces {
+        // Tweak nonce per iteration so we cover different bucket
+        // configurations. First byte is unique per iteration.
+        let mut nonce = base_nonce;
+        nonce[0] = (n & 0xFF) as u8;
+        nonce[1] = ((n >> 8) & 0xFF) as u8;
+
+        let t_cpu = Instant::now();
+        let cpu_leaves = shader_ref::leaves(&input, &nonce, 1 << 17);
+        let cpu_solutions = shader_ref::wagner_full(&cpu_leaves);
+        let cpu_ms = t_cpu.elapsed().as_millis();
+
+        let t_gpu = Instant::now();
+        let gpu_solutions = wagner.run_nonce(&input, &nonce)?;
+        let gpu_ms = t_gpu.elapsed().as_millis();
+
+        // Canonicalize for comparison: sort each solution's indices
+        // lexicographically *of its 32 u32s* (canonical concat means
+        // both sides produce the same order, but sorting the *list of
+        // solutions* is needed since GPU emits in non-deterministic
+        // order).
+        let mut cpu_sorted: Vec<[u32; 32]> = cpu_solutions
+            .iter()
+            .map(|r| r.indices)
+            .collect();
+        cpu_sorted.sort();
+        let mut gpu_sorted = gpu_solutions.clone();
+        gpu_sorted.sort();
+
+        let agree = cpu_sorted == gpu_sorted;
+        let tag = if agree { "✓" } else { "✗" };
+        println!(
+            "  nonce #{:<3}  cpu: {:>5}ms ({} sol)  gpu: {:>5}ms ({} sol)  {}",
+            n,
+            cpu_ms,
+            cpu_sorted.len(),
+            gpu_ms,
+            gpu_sorted.len(),
+            tag
+        );
+
+        if !agree {
+            disagreements += 1;
+            println!("    cpu solutions: {:?}", cpu_sorted);
+            println!("    gpu solutions: {:?}", gpu_sorted);
+        }
+    }
+
+    if disagreements == 0 {
+        println!(
+            "\n✓ GPU Wagner pipeline matches CPU reference across {} nonces.",
+            n_nonces
+        );
+        println!("  Safe to mine with --full-gpu.");
+        Ok(())
+    } else {
+        bail!(
+            "{} nonce(s) disagreed between GPU and CPU — do NOT use --full-gpu",
+            disagreements
+        )
+    }
+}
+
+fn bench_wagner(iterations: u32) -> Result<()> {
+    let wagner = wagner::GpuWagner::new()?;
+    println!("GPU backend: {}", wagner.adapter_name);
+
+    let (input, nonce) = fixed_test_input();
+
+    // Warm-up: triggers shader compile + pipeline cache + first-buffer
+    // alloc cost.
+    let _ = wagner.run_nonce(&input, &nonce)?;
+
+    let t0 = Instant::now();
+    for n in 0..iterations {
+        let mut nn = nonce;
+        nn[0] = (n & 0xFF) as u8;
+        nn[1] = ((n >> 8) & 0xFF) as u8;
+        let _ = wagner.run_nonce(&input, &nn)?;
+    }
+    let elapsed = t0.elapsed();
+    let h_per_sec = iterations as f64 / elapsed.as_secs_f64();
+
+    println!(
+        "{} iterations in {:.2}s",
+        iterations,
+        elapsed.as_secs_f64()
+    );
+    println!(
+        "wagner throughput:  {:>10.1} H/s   ({:.1} ms/nonce)",
+        h_per_sec,
+        elapsed.as_secs_f64() * 1000.0 / iterations as f64
+    );
+
+    Ok(())
+}
+
+// ============================================================================
 // Mining loop
 // ============================================================================
 
@@ -296,9 +441,31 @@ fn mine(
     max_blocks: u64,
     cu_limit: u32,
     threads: usize,
+    full_gpu: bool,
 ) -> Result<()> {
-    let gpu = Arc::new(gpu::GpuLeafGen::new()?);
-    println!("GPU backend: {}", gpu.adapter_name);
+    // Two pipelines: v0.1 hybrid uses GpuLeafGen + CPU Wagner workers;
+    // v0.2 full_gpu uses GpuWagner single-threaded.
+    let leaf_gen = if !full_gpu {
+        Some(Arc::new(gpu::GpuLeafGen::new()?))
+    } else {
+        None
+    };
+    let wagner_gpu = if full_gpu {
+        Some(wagner::GpuWagner::new()?)
+    } else {
+        None
+    };
+    let adapter_name = match (&leaf_gen, &wagner_gpu) {
+        (Some(g), _) => g.adapter_name.clone(),
+        (_, Some(w)) => w.adapter_name.clone(),
+        _ => unreachable!(),
+    };
+    println!("GPU backend: {}", adapter_name);
+    if full_gpu {
+        println!("mode: v0.2 full-GPU (leaves + Wagner + solution scan on GPU)");
+    } else {
+        println!("mode: v0.1 hybrid (GPU leaves + CPU Wagner)");
+    }
 
     let miner_kp = read_keypair_file(&keypair_path)
         .map_err(|e| anyhow!("read keypair {}: {}", keypair_path.display(), e))?;
@@ -316,12 +483,17 @@ fn mine(
     };
 
     let thread_count = if threads == 0 { num_cpus::get().max(1) } else { threads };
+    let header_threads = if full_gpu {
+        "1 single-threaded GPU pipeline".to_string()
+    } else {
+        format!("{} CPU + 1 shared GPU", thread_count)
+    };
     println!(
-        "miner   {}\nprogram {}\nrpc     {}\nthreads {} CPU + 1 shared GPU\n",
+        "miner   {}\nprogram {}\nrpc     {}\nthreads {}\n",
         short_pk(&miner),
         short_pk(&program_id),
         truncate(&rpc_url, 60),
-        thread_count
+        header_threads
     );
 
     let mut current_height: u64 = u64::MAX;
@@ -352,16 +524,31 @@ fn mine(
 
         let input = build_input(&cfg.current_challenge, &miner.to_bytes(), cfg.block_height);
         let race_started = Instant::now();
-        let race_result = race_for_solution_gpu(
-            gpu.clone(),
-            &input,
-            &cfg.current_target,
-            thread_count,
-            // Per-thread nonce budget. Smaller than the CPU miner's because
-            // each attempt costs a GPU round-trip; we'd rather refetch
-            // config more often to avoid stale-challenge waste.
-            64,
-        );
+        let (race_result, race_nonces_attempted) = if full_gpu {
+            // Full-GPU: 32 nonces per round attempt. Each costs one
+            // GPU end-to-end pass; refetching config every ~32 keeps
+            // us responsive to height changes.
+            let max_attempts = 32u64;
+            let r = race_for_solution_full_gpu(
+                wagner_gpu.as_ref().unwrap(),
+                &input,
+                &cfg.current_target,
+                max_attempts,
+            )?;
+            (r, max_attempts)
+        } else {
+            // v0.1 hybrid: many CPU threads, each running its own
+            // Wagner pass against shared GPU leaves.
+            let max_per_thread = 64u64;
+            let r = race_for_solution_gpu(
+                leaf_gen.as_ref().unwrap().clone(),
+                &input,
+                &cfg.current_target,
+                thread_count,
+                max_per_thread,
+            );
+            (r, (thread_count as u64) * max_per_thread)
+        };
 
         let elapsed = race_started.elapsed();
         match race_result {
@@ -416,8 +603,7 @@ fn mine(
                 }
             }
             None => {
-                let n = (thread_count as u64) * 64;
-                total_nonces = total_nonces.saturating_add(n);
+                total_nonces = total_nonces.saturating_add(race_nonces_attempted);
                 try_in_round += 1;
                 let session_secs = started_at.elapsed().as_secs_f64().max(0.001);
                 let hashrate = total_nonces as f64 / session_secs;
@@ -497,6 +683,65 @@ fn race_for_solution_gpu(
     }
     let nonces_tried = total_nonces.load(Ordering::Relaxed);
     winner.map(|w| (w, nonces_tried))
+}
+
+/// Single-threaded full-GPU race: try nonces sequentially through
+/// `GpuWagner::run_nonce`. Wagner is GPU-bound, so multi-threading
+/// here just contends on the single device; one thread saturates it.
+fn race_for_solution_full_gpu(
+    wagner_gpu: &wagner::GpuWagner,
+    input: &[u8; I_LEN],
+    target: &[u8; 32],
+    max_attempts: u64,
+) -> Result<Option<(RaceWinner, u64)>> {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let mut tried = 0u64;
+    while tried < max_attempts {
+        let mut nonce = [0u8; 32];
+        rng.fill(&mut nonce);
+        tried += 1;
+
+        let solutions = wagner_gpu.run_nonce(input, &nonce)?;
+        for indices in solutions {
+            let compressed = compress_indices_96_5(&indices);
+            // Defense in depth: re-validate via the upstream verifier
+            // before paying for an RPC tx. If the GPU produced a stale
+            // or malformed solution, skip silently.
+            if equihash::is_valid_solution(96, 5, input, &nonce, &compressed).is_err() {
+                continue;
+            }
+            let h = solution_hash(&compressed, input);
+            if hash_under_target(&h, target) {
+                return Ok(Some((
+                    RaceWinner { nonce, soln_indices: compressed },
+                    tried,
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Compress 32 u32 solution indices into the 68-byte SPL-side format
+/// (17 bits per index, packed big-endian). Mirrors
+/// `equihash_core::solver::compress_indices` for (96, 5).
+fn compress_indices_96_5(indices: &[u32; 32]) -> Vec<u8> {
+    const BITS_PER: usize = 17; // cbits(96, 5) + 1 = 16 + 1
+    let total_bits = BITS_PER * indices.len();
+    let total_bytes = total_bits.div_ceil(8);
+    let mut out = vec![0u8; total_bytes];
+    let mut pos = 0usize;
+    for &idx in indices {
+        for b in (0..BITS_PER).rev() {
+            let bit = (idx >> b) & 1;
+            let byte = pos / 8;
+            let shift = 7 - (pos % 8);
+            out[byte] |= (bit as u8) << shift;
+            pos += 1;
+        }
+    }
+    out
 }
 
 // ============================================================================

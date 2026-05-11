@@ -25,6 +25,9 @@ env_logger = "0.11"
 crossbeam-channel = "0.5"
 num_cpus = "1"
 blake2b_simd = "1"
+# For re-validating GPU-emitted Wagner solutions against the upstream
+# verifier before submitting tx. Same crate equihash-core uses.
+equihash = { workspace = true }
 
 # GPU: wgpu picks the best available backend (Metal on macOS, Vulkan on
 # Linux/Windows, DX12 on Windows). bytemuck for safely casting structs
@@ -33,3 +36,9 @@ blake2b_simd = "1"
 wgpu = "24"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
+
+[dev-dependencies]
+# naga lets us parse + validate WGSL shaders in `cargo test` without
+# needing a real GPU adapter. The version is pinned to match wgpu's
+# internal naga (avoids dual-version compiles).
+naga = { version = "24", features = ["wgsl-in"] }
