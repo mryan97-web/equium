@@ -1,12 +1,11 @@
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
-import { DownloadButtons } from "@/components/DownloadButtons";
 
 export const metadata = {
-  title: "Download Equium Miner",
+  title: "Mine Equium · CLI install guide",
   description:
-    "Three ways to mine Equium ($EQM): native desktop installers for macOS/Windows/Linux, a browser miner, and a Rust CLI reference miner. Same protocol, same on-chain output.",
+    "Set up the Equium CLI miner on macOS, Linux, or Windows (via WSL). Build from source in 5 minutes, point it at an RPC, mine $EQM.",
 };
 
 export default function DownloadPage() {
@@ -19,212 +18,263 @@ export default function DownloadPage() {
             Mine Equium
           </div>
           <h1 className="text-[40px] md:text-[52px] font-black tracking-[-0.025em] leading-[1.05] mb-5">
-            Pick a miner.
+            Install the CLI miner.
           </h1>
-          <p className="text-[17px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-10">
-            Three reference miners. All three produce identical on-chain
-            transactions and use the same Equihash 96,5 puzzle. Pick whichever
-            fits how you want to run things.
+          <p className="text-[17px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-4">
+            The CLI miner is the reference implementation: a single Rust
+            binary, no Electron, no installer popups, runs headlessly on
+            anything that can build the source. It's currently the most
+            performant + most reliable way to mine $EQM, and it's what
+            we recommend for serious miners.
+          </p>
+          <p className="text-[15px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-10">
+            Just want to try mining without installing anything? Use the{" "}
+            <Link
+              href="/mine"
+              className="text-[var(--color-rose)] font-semibold hover:underline"
+            >
+              browser miner
+            </Link>{" "}
+            instead. Same protocol, slower because of WASM overhead, but
+            zero setup.
           </p>
 
-          {/* Three-way chooser */}
-          <div className="grid sm:grid-cols-3 gap-3 mb-12">
-            <Chooser
-              kicker="Browser"
-              title="No install"
-              body="One click on equium.xyz/mine. Built-in wallet, our RPC proxy. Best for casual mining and trying things out."
-              href="/mine"
-              cta="Open in browser →"
+          {/* OS picker */}
+          <div className="grid sm:grid-cols-3 gap-3 mb-10">
+            <OsCard
+              label="macOS"
+              hint="Apple Silicon or Intel"
+              href="#macos"
             />
-            <Chooser
-              kicker="Desktop"
-              title="Recommended"
-              body="Native app for macOS, Windows, Linux. Encrypted local wallet. Bring your own RPC. Best for sustained mining."
-              href="#desktop-install"
-              cta="See installers ↓"
-              highlight
+            <OsCard
+              label="Linux"
+              hint="Ubuntu, Debian, Arch, Fedora"
+              href="#linux"
             />
-            <Chooser
-              kicker="CLI"
-              title="Headless"
-              body="Reference Rust miner. Point it at any keypair file and an RPC URL. Best for servers and pinning to a specific version."
-              href="#cli-miner"
-              cta="Build from source ↓"
+            <OsCard
+              label="Windows"
+              hint="via WSL2 (recommended)"
+              href="#windows"
             />
           </div>
 
-          {/* Desktop install */}
-          <section id="desktop-install" className="scroll-mt-32">
-            <h2 className="text-[24px] font-bold tracking-[-0.015em] mb-2">
-              Desktop installers
+          {/* Common prerequisites */}
+          <section className="mb-12">
+            <h2 className="text-[22px] font-bold tracking-[-0.015em] mb-3">
+              What you'll need
             </h2>
-            <p className="text-[14px] text-[var(--color-fg-dim)] mb-6">
-              Auto-detected for your platform. All builds are reproducible from
-              the source in <code className="font-mono text-[12.5px] text-[var(--color-teal)]">clients/desktop-miner</code>.
-            </p>
-            <DownloadButtons />
-
-            <div className="mt-10 space-y-6">
-              <Note title="Windows says it's untrusted — that's expected">
-                <p className="text-[14.5px] leading-[1.6] text-[var(--color-fg-dim)] mb-3">
-                  The installer isn't code-signed yet, so Windows SmartScreen
-                  will warn that it's from an unknown publisher. This is the
-                  default for any new open-source app without an Authenticode
-                  cert. To install:
-                </p>
-                <ol className="list-decimal pl-6 space-y-1.5 text-[14px] leading-[1.6] text-[var(--color-fg-dim)] mb-3">
-                  <li>
-                    Click <span className="font-mono font-semibold">More info</span> on the
-                    SmartScreen popup.
-                  </li>
-                  <li>
-                    Click <span className="font-mono font-semibold">Run anyway</span>.
-                  </li>
-                  <li>
-                    If you'd rather verify the binary first, every release
-                    publishes a SHA-256 checksum file (
-                    <code className="font-mono text-[12.5px] text-[var(--color-teal)]">.sha256</code>
-                    ) next to the installer. Compare with{" "}
-                    <code className="font-mono text-[12.5px] text-[var(--color-teal)]">
-                      Get-FileHash Equium-Miner.msi
-                    </code>{" "}
-                    in PowerShell.
-                  </li>
-                </ol>
-                <p className="text-[13px] leading-[1.6] text-[var(--color-fg-faint)]">
-                  Code-signing is on the roadmap. macOS and Linux behave
-                  similarly without notarization / a signed appimage; the
-                  source is open if you'd rather build from scratch.
-                </p>
-              </Note>
-
-              <Note title="What you need">
-                <ul className="list-disc pl-6 space-y-2 text-[14.5px] leading-[1.6] text-[var(--color-fg-dim)]">
-                  <li>
-                    macOS 11+ (Apple Silicon or Intel), Windows 10/11, or
-                    x86_64 Linux.
-                  </li>
-                  <li>
-                    ~0.005 SOL in your generated wallet for transaction fees.
-                    Each mining attempt is a Solana transaction; that's about
-                    30 attempts per dollar.
-                  </li>
-                  <li>
-                    A Solana RPC endpoint. The default public endpoint works
-                    for testing;{" "}
-                    <Link
-                      href="/docs/rpc"
-                      className="text-[var(--color-rose)] hover:underline"
-                    >
-                      grab a free Helius key
-                    </Link>{" "}
-                    for sustained mining.
-                  </li>
-                </ul>
-              </Note>
-
-              <Note title="How it works">
-                <ol className="list-decimal pl-6 space-y-2 text-[14.5px] leading-[1.6] text-[var(--color-fg-dim)]">
-                  <li>Open the app, create a wallet, back up the secret key.</li>
-                  <li>
-                    Send a small amount of SOL to the address shown. Any Solana
-                    wallet will work since it is a regular address.
-                  </li>
-                  <li>
-                    Click <span className="font-mono font-semibold">Start mining</span>.
-                    The app runs Equihash on your CPU and submits valid solutions
-                    directly to Solana. Each block credits 25 EQM to your wallet.
-                  </li>
-                </ol>
-              </Note>
-
-              <Note title="Security">
-                <p className="text-[14.5px] leading-[1.6] text-[var(--color-fg-dim)]">
-                  Secret keys are encrypted with{" "}
-                  <span className="font-mono font-semibold">Argon2id + AES-256-GCM</span>{" "}
-                  under your password and stored in the app's local data folder.
-                  The plaintext only exists in memory while the wallet is unlocked.
-                  Nothing leaves your machine except RPC traffic.
-                </p>
-              </Note>
-            </div>
-          </section>
-
-          {/* CLI miner */}
-          <section id="cli-miner" className="mt-16 scroll-mt-32">
-            <h2 className="text-[24px] font-bold tracking-[-0.015em] mb-2">
-              CLI miner
-            </h2>
-            <p className="text-[14px] text-[var(--color-fg-dim)] mb-6">
-              The reference implementation. Pure Rust, single binary, runs
-              anywhere you can compile it. Use it when you want a headless
-              setup on a server or when you'd rather pin to a specific commit
-              than auto-update.
-            </p>
-
-            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-6 space-y-4">
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-[var(--color-fg-dim)] mb-2 font-semibold">
-                  Build from source
-                </div>
-                <pre className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 overflow-x-auto font-mono text-[12.5px] leading-[1.7] text-[var(--color-fg-soft)]">{`git clone https://github.com/HannaPrints/equium
-cd equium/clients/cli-miner
-cargo build --release`}</pre>
-              </div>
-
-              <div>
-                <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-[var(--color-fg-dim)] mb-2 font-semibold">
-                  Run it
-                </div>
-                <pre className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 overflow-x-auto font-mono text-[12.5px] leading-[1.7] text-[var(--color-fg-soft)]">{`./target/release/equium-miner \\
-  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
-  --keypair ~/.config/solana/id.json`}</pre>
-              </div>
-
-              <p className="text-[13px] text-[var(--color-fg-dim)] leading-[1.6]">
-                The CLI miner uses an existing Solana keypair file. Generate one
-                with <code className="font-mono text-[12px] text-[var(--color-teal)]">solana-keygen new</code>{" "}
-                or export from any wallet. Pass <code className="font-mono text-[12px] text-[var(--color-teal)]">--max-blocks N</code>{" "}
-                to stop after N successful mines, or omit it to run indefinitely.
-              </p>
-
-              <div className="pt-2 border-t border-[var(--color-border)]">
-                <a
-                  href="https://github.com/HannaPrints/equium/tree/master/clients/cli-miner"
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-rose)] hover:underline"
+            <ul className="list-disc pl-6 space-y-2 text-[14.5px] leading-[1.65] text-[var(--color-fg-dim)]">
+              <li>
+                A Solana keypair file. Generate one with{" "}
+                <Code>solana-keygen new -o ~/.config/solana/id.json</Code>{" "}
+                (the Solana CLI install instructions are part of each section
+                below).
+              </li>
+              <li>
+                A small amount of SOL for transaction fees in that keypair's
+                address. Roughly 0.01 SOL covers a few hours of mining.
+              </li>
+              <li>
+                A Solana RPC endpoint. A free Helius key is fine —{" "}
+                <Link
+                  href="/docs/rpc"
+                  className="text-[var(--color-rose)] hover:underline"
                 >
-                  Source on GitHub →
-                </a>
-              </div>
-            </div>
-          </section>
-
-          {/* All paths */}
-          <section className="mt-16">
-            <h2 className="text-[20px] font-bold tracking-[-0.015em] mb-3">
-              Which one should I use?
-            </h2>
-            <p className="text-[14.5px] leading-[1.6] text-[var(--color-fg-dim)] mb-3">
-              All three submit the same <code className="font-mono text-[12.5px] text-[var(--color-teal)]">mine</code>{" "}
-              transactions to the same on-chain program. Pick on operational
-              taste:
-            </p>
-            <ul className="list-disc pl-6 space-y-1.5 text-[14.5px] leading-[1.6] text-[var(--color-fg-dim)]">
-              <li>
-                Want to try things out without committing? Browser miner.
-              </li>
-              <li>
-                Want a persistent local app with the highest single-CPU
-                throughput? Desktop miner.
-              </li>
-              <li>
-                Want to run on a VPS, in a Docker container, or alongside other
-                services? CLI miner.
+                  5-minute setup
+                </Link>
+                . The default public mainnet endpoint will rate-limit you out
+                of meaningful mining within seconds.
               </li>
             </ul>
           </section>
+
+          {/* macOS */}
+          <Section id="macos" title="macOS">
+            <P>
+              Native macOS — Apple Silicon or Intel, both work. Open Terminal:
+            </P>
+            <Block label="1 · Install Rust">
+              <Pre>{`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"`}</Pre>
+            </Block>
+            <Block label="2 · Install the Solana CLI (for keypair generation)">
+              <Pre>{`sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"`}</Pre>
+            </Block>
+            <Block label="3 · Generate a mining keypair">
+              <Pre>{`solana-keygen new -o ~/.config/solana/id.json --no-bip39-passphrase
+solana-keygen pubkey ~/.config/solana/id.json   # send a bit of SOL here`}</Pre>
+            </Block>
+            <Block label="4 · Build + run the miner">
+              <Pre>{`git clone https://github.com/HannaPrints/equium.git
+cd equium
+cargo build --release -p equium-cli-miner
+
+./target/release/equium-miner \\
+  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
+  --keypair ~/.config/solana/id.json \\
+  --threads $(sysctl -n hw.physicalcpu)`}</Pre>
+            </Block>
+          </Section>
+
+          {/* Linux */}
+          <Section id="linux" title="Linux">
+            <P>
+              Tested on Ubuntu 22.04, Debian 12, Arch, and Fedora. Other
+              distros work the same — adjust the package manager call.
+            </P>
+            <Block label="1 · Install build tools">
+              <Pre>{`# Debian / Ubuntu
+sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev curl git
+
+# Arch
+sudo pacman -S --needed base-devel openssl curl git
+
+# Fedora
+sudo dnf install -y @development-tools openssl-devel curl git`}</Pre>
+            </Block>
+            <Block label="2 · Install Rust">
+              <Pre>{`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"`}</Pre>
+            </Block>
+            <Block label="3 · Install the Solana CLI">
+              <Pre>{`sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"`}</Pre>
+            </Block>
+            <Block label="4 · Generate a keypair">
+              <Pre>{`solana-keygen new -o ~/.config/solana/id.json --no-bip39-passphrase
+solana-keygen pubkey ~/.config/solana/id.json`}</Pre>
+            </Block>
+            <Block label="5 · Build + run">
+              <Pre>{`git clone https://github.com/HannaPrints/equium.git
+cd equium
+cargo build --release -p equium-cli-miner
+
+./target/release/equium-miner \\
+  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
+  --keypair ~/.config/solana/id.json \\
+  --threads $(nproc)`}</Pre>
+            </Block>
+          </Section>
+
+          {/* Windows */}
+          <Section id="windows" title="Windows">
+            <Callout>
+              <strong>WSL2 is the path of least resistance.</strong> Native
+              Windows + Rust + Solana CLI is theoretically possible but
+              accumulates papercuts fast (path handling, OpenSSL, line
+              endings). Run Linux inside Windows via WSL2 and skip them.
+            </Callout>
+
+            <Block label="1 · Install WSL2 + Ubuntu (one-time)">
+              <P>
+                Open <strong>PowerShell as Administrator</strong> and run:
+              </P>
+              <Pre>{`wsl --install -d Ubuntu`}</Pre>
+              <P>
+                Reboot when prompted, then open the new "Ubuntu" app from
+                the Start menu and set a UNIX username + password. You're
+                now inside Linux — everything below runs in the Ubuntu
+                terminal, not PowerShell.
+              </P>
+            </Block>
+
+            <Block label="2 · Install build tools (inside WSL)">
+              <Pre>{`sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev curl git`}</Pre>
+            </Block>
+
+            <Block label="3 · Install Rust">
+              <Pre>{`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"`}</Pre>
+            </Block>
+
+            <Block label="4 · Install the Solana CLI">
+              <Pre>{`sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"`}</Pre>
+            </Block>
+
+            <Block label="5 · Generate a keypair + build">
+              <Pre>{`solana-keygen new -o ~/.config/solana/id.json --no-bip39-passphrase
+solana-keygen pubkey ~/.config/solana/id.json    # send SOL here
+
+git clone https://github.com/HannaPrints/equium.git
+cd equium
+cargo build --release -p equium-cli-miner
+
+./target/release/equium-miner \\
+  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
+  --keypair ~/.config/solana/id.json \\
+  --threads $(nproc)`}</Pre>
+            </Block>
+
+            <Callout tone="dim">
+              <strong>Determined to mine on native Windows?</strong> You'll
+              need rustup-init.exe, the Solana Windows installer, and a
+              C++ build toolchain (Build Tools for Visual Studio with the
+              C++ workload). After that the cargo command is the same.
+              File a GitHub issue if something specific breaks and we'll
+              document a workaround.
+            </Callout>
+          </Section>
+
+          {/* Performance notes */}
+          <Section id="perf" title="Performance notes">
+            <P>
+              The miner spawns one solver thread per physical core by
+              default. Override with <Code>--threads N</Code> if you want to
+              leave some cores free for other work. Each thread independently
+              grinds nonces; first to find a below-target solution wins the
+              round.
+            </P>
+            <P>
+              The auto-retargeter brings difficulty up as more miners join
+              the network. Expect your hashrate, in absolute terms, to look
+              fine while your share of blocks shrinks — that's the network
+              working as designed.
+            </P>
+            <P>
+              <strong>About GPU miners.</strong> Equihash 96,5 is memory-hard
+              by design, so GPU advantage is bounded relative to SHA-based
+              proof-of-work, but a tuned GPU implementation will still beat
+              a CPU. An open-source GPU miner is in the works (
+              <Link
+                href="/docs/protocol#gpu"
+                className="text-[var(--color-rose)] hover:underline"
+              >
+                see the protocol page
+              </Link>
+              ). Until then, a multi-core CPU still earns real EQM — the
+              retargeter just keeps the network balanced.
+            </P>
+          </Section>
+
+          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-5 md:p-6 mt-12">
+            <h3 className="text-[16px] font-bold tracking-[-0.01em] mb-2">
+              Stuck?
+            </h3>
+            <p className="text-[14px] leading-[1.6] text-[var(--color-fg-dim)]">
+              The full source is at{" "}
+              <a
+                href="https://github.com/HannaPrints/equium"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-[var(--color-rose)] hover:underline"
+              >
+                github.com/HannaPrints/equium
+              </a>
+              . Open an issue if you hit something specific or post in
+              the X replies on{" "}
+              <a
+                href="https://x.com/EquiumEQM"
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-[var(--color-rose)] hover:underline"
+              >
+                @EquiumEQM
+              </a>
+              .
+            </p>
+          </div>
         </div>
       </div>
       <Footer />
@@ -232,73 +282,106 @@ cargo build --release`}</pre>
   );
 }
 
-function Chooser({
-  kicker,
-  title,
-  body,
+function OsCard({
+  label,
+  hint,
   href,
-  cta,
-  highlight,
 }: {
-  kicker: string;
-  title: string;
-  body: string;
+  label: string;
+  hint: string;
   href: string;
-  cta: string;
-  highlight?: boolean;
 }) {
-  const Tag = href.startsWith("#") || href.startsWith("/") ? Link : "a";
-  const linkProps = href.startsWith("#") || href.startsWith("/")
-    ? { href }
-    : { href, target: "_blank", rel: "noreferrer noopener" };
   return (
-    <Tag
-      {...(linkProps as any)}
-      className={`rounded-2xl border p-5 flex flex-col gap-2 transition-colors group ${
-        highlight
-          ? "border-[var(--color-rose-soft)] bg-[var(--color-rose-soft)]/[0.08] hover:border-[var(--color-rose)]"
-          : "border-[var(--color-border)] bg-[var(--color-bg-elev)] hover:border-[var(--color-border-bright)]"
-      }`}
+    <Link
+      href={href}
+      className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-5 hover:border-[var(--color-rose-soft)] transition-colors group"
     >
-      <div
-        className={`text-[10px] font-mono uppercase tracking-[0.2em] font-semibold ${
-          highlight
-            ? "text-[var(--color-rose)]"
-            : "text-[var(--color-fg-dim)]"
-        }`}
-      >
-        {kicker}
+      <div className="text-[18px] font-bold tracking-[-0.01em] group-hover:text-[var(--color-rose)] transition-colors">
+        {label}
       </div>
-      <div className="text-[17px] font-bold tracking-[-0.01em]">{title}</div>
-      <p className="text-[13.5px] leading-[1.55] text-[var(--color-fg-dim)] flex-1">
-        {body}
-      </p>
-      <div
-        className={`text-[12.5px] font-semibold mt-2 ${
-          highlight
-            ? "text-[var(--color-rose)]"
-            : "text-[var(--color-fg-soft)] group-hover:text-[var(--color-fg)]"
-        }`}
-      >
-        {cta}
+      <div className="text-[12px] font-mono text-[var(--color-fg-dim)] mt-1">
+        {hint}
       </div>
-    </Tag>
+    </Link>
   );
 }
 
-function Note({
+function Section({
+  id,
   title,
   children,
 }: {
+  id: string;
   title: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-elev)] p-5 md:p-6">
-      <h3 className="text-[16px] font-bold tracking-[-0.01em] mb-2.5">
+    <section id={id} className="scroll-mt-32 mb-14">
+      <h2 className="text-[26px] font-bold tracking-[-0.018em] mb-4">
         {title}
-      </h3>
-      {children}
+      </h2>
+      <div className="space-y-4">{children}</div>
     </section>
+  );
+}
+
+function Block({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[10px] font-mono uppercase tracking-[0.18em] text-[var(--color-fg-dim)] mb-2 font-semibold">
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function P({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[14.5px] leading-[1.65] text-[var(--color-fg-soft)]">
+      {children}
+    </p>
+  );
+}
+
+function Pre({ children }: { children: React.ReactNode }) {
+  return (
+    <pre className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 overflow-x-auto font-mono text-[12.5px] leading-[1.7] text-[var(--color-fg-soft)]">
+      {children}
+    </pre>
+  );
+}
+
+function Code({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="font-mono text-[12.5px] px-1.5 py-0.5 rounded bg-[var(--color-bg)] border border-[var(--color-border)] text-[var(--color-teal)]">
+      {children}
+    </code>
+  );
+}
+
+function Callout({
+  children,
+  tone = "default",
+}: {
+  children: React.ReactNode;
+  tone?: "default" | "dim";
+}) {
+  const cls =
+    tone === "dim"
+      ? "border-[var(--color-border)] bg-[var(--color-bg-elev)] text-[var(--color-fg-dim)]"
+      : "border-[var(--color-gold)]/40 bg-[var(--color-gold)]/[0.06]";
+  return (
+    <div
+      className={`rounded-2xl border p-5 my-2 text-[14px] leading-[1.6] ${cls}`}
+    >
+      {children}
+    </div>
   );
 }
