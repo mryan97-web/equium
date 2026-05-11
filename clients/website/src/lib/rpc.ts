@@ -6,7 +6,7 @@ import {
 } from "@coral-xyz/anchor";
 import idl from "../idl.json";
 import { CONFIG_PDA } from "./program";
-import { cached } from "./cache";
+import { cached, getRedisClient } from "./cache";
 
 // Server-side RPC URL (full upstream URL with API key). Never sent to the
 // browser; only used by server components, /api/state, /api/rpc, and OG
@@ -227,6 +227,287 @@ export async function fetchLeaderboardUncached(
   return Array.from(map.values())
     .sort((a, b) => b.blocks - a.blocks)
     .slice(0, take);
+}
+
+// ============================================================================
+// All-time miner aggregator (Redis-backed, incrementally updated by cron)
+// ============================================================================
+
+/** All-time leaderboard row. `hashratePerSec` is the per-miner
+ * hashrate derived from blocks in the last hour + current difficulty
+ * — 0 if the miner hasn't found a block recently. */
+export interface AllTimeEntry {
+  miner: string;
+  blocks: number;
+  totalRewardBase: number;
+  lastSeen: number;
+  lastHeight: number;
+  /** Hashrate in H/s, calculated from blocks in the last hour. 0 if
+   * the miner has been inactive recently. */
+  hashratePerSec: number;
+}
+
+const ALLTIME_MINERS = "equium:alltime:miners:v1";
+const ALLTIME_REWARDS = "equium:alltime:rewards:v1";
+const ALLTIME_LAST_SEEN = "equium:alltime:last_seen:v1";
+const ALLTIME_LAST_HEIGHT = "equium:alltime:last_height:v1";
+const ALLTIME_CURSOR = "equium:alltime:cursor:v1";
+const RECENT_MINER_BLOCKS = "equium:recent:miner_blocks:v1";
+const RECENT_WINDOW_SEC = 3600; // 1 hour
+
+/**
+ * Walk new program signatures since the last cursor, accumulate
+ * per-miner block counts + rewards into Redis HASHes, and update the
+ * recent-blocks ZSET used for per-miner hashrate calculation.
+ *
+ * Idempotent in steady state: each cron tick processes only the
+ * signatures strictly newer than the saved cursor. The first run with
+ * no cursor scans up to MAX_SIGS most recent signatures (capped to fit
+ * in the cron's 60s budget).
+ */
+export async function updateAllTimeAggregator(): Promise<{
+  processed: number;
+  newest: string | null;
+}> {
+  const redis = getRedisClient();
+  if (!redis) return { processed: 0, newest: null };
+
+  try {
+    const conn = readConnection();
+    const PROGRAM_ID = new PublicKey(idl.address);
+    const cursor = await redis.get<string>(ALLTIME_CURSOR).catch(() => null);
+
+    // First run: scan up to MAX_SIGS most recent signatures and treat
+    // them as the historical baseline. After this, future ticks use
+    // `until=cursor` for cheap incrementals.
+    const MAX_SIGS = 1000;
+    const opts: { limit: number; until?: string } = { limit: MAX_SIGS };
+    if (cursor) opts.until = cursor;
+
+    const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, opts);
+    if (sigs.length === 0) return { processed: 0, newest: cursor ?? null };
+
+    // sigs are newest-first; reverse to process oldest-first so the
+    // cursor we save at the end is the newest (sigs[0]) and last_seen
+    // ends up monotonic.
+    const ordered = [...sigs].reverse();
+    const nowSec = Math.floor(Date.now() / 1000);
+
+    const BATCH = 10;
+    let processed = 0;
+    for (let i = 0; i < ordered.length; i += BATCH) {
+      const batch = ordered.slice(i, i + BATCH).filter((s) => !s.err);
+      const txs = await Promise.all(
+        batch.map((s) =>
+          conn.getTransaction(s.signature, {
+            commitment: "confirmed",
+            maxSupportedTransactionVersion: 0,
+          })
+        )
+      );
+      for (let j = 0; j < txs.length; j++) {
+        const tx = txs[j];
+        if (!tx) continue;
+        const sig = batch[j];
+        const logs = tx.meta?.logMessages ?? [];
+        const mineLog = logs.find((l) => l.includes("equium: mined block"));
+        if (!mineLog) continue;
+        const m = mineLog.match(/mined block (\d+) by ([\w]+) for (\d+)/);
+        if (!m) continue;
+
+        const height = Number(m[1]);
+        const winner = m[2];
+        const reward = Number(m[3]);
+        const ts = sig.blockTime ?? nowSec;
+
+        // Update aggregator HASHes. All ops are await'd individually
+        // rather than in a pipeline to keep error handling clean —
+        // Upstash REST is fast enough that the parallelism we'd gain
+        // from a pipeline isn't worth the complexity here.
+        await redis.hincrby(ALLTIME_MINERS, winner, 1);
+        await redis.hincrby(ALLTIME_REWARDS, winner, reward);
+        await redis.hset(ALLTIME_LAST_SEEN, { [winner]: ts });
+        await redis.hset(ALLTIME_LAST_HEIGHT, { [winner]: height });
+
+        // Track this block in the recent-blocks ZSET (score = ts,
+        // member = miner:height so duplicates are impossible).
+        await redis.zadd(RECENT_MINER_BLOCKS, {
+          score: ts,
+          member: `${winner}:${height}`,
+        });
+
+        processed++;
+      }
+    }
+
+    // Trim recent-blocks ZSET to the rolling window.
+    await redis
+      .zremrangebyscore(RECENT_MINER_BLOCKS, 0, nowSec - RECENT_WINDOW_SEC)
+      .catch(() => 0);
+
+    const newest = sigs[0].signature;
+    await redis.set(ALLTIME_CURSOR, newest);
+    return { processed, newest };
+  } catch (e) {
+    console.error("updateAllTimeAggregator failed", e);
+    return { processed: 0, newest: null };
+  }
+}
+
+/**
+ * Read the all-time top-N miners from the Redis HASH aggregator and
+ * decorate each row with hashrate (derived from per-miner blocks in
+ * the last hour + current difficulty target).
+ */
+export async function fetchAllTimeLeaderboard(
+  take = 50
+): Promise<AllTimeEntry[]> {
+  const redis = getRedisClient();
+  if (!redis) return [];
+
+  try {
+    const [miners, rewards, lastSeen, lastHeight, state, recent] =
+      await Promise.all([
+        redis.hgetall<Record<string, number>>(ALLTIME_MINERS),
+        redis.hgetall<Record<string, number>>(ALLTIME_REWARDS),
+        redis.hgetall<Record<string, number>>(ALLTIME_LAST_SEEN),
+        redis.hgetall<Record<string, number>>(ALLTIME_LAST_HEIGHT),
+        fetchState().catch(() => null),
+        // Members with score in [now-RECENT_WINDOW_SEC, +inf] are the
+        // recent-1hr blocks. Each member is "<miner>:<height>" so we
+        // can count per miner.
+        redis.zrange<string[]>(
+          RECENT_MINER_BLOCKS,
+          Math.floor(Date.now() / 1000) - RECENT_WINDOW_SEC,
+          "+inf",
+          { byScore: true }
+        ),
+      ]);
+
+    if (!miners || Object.keys(miners).length === 0) return [];
+
+    // Per-miner block count in the last hour.
+    const recentCount = new Map<string, number>();
+    for (const member of recent || []) {
+      const colon = (member as string).indexOf(":");
+      if (colon < 0) continue;
+      const m = (member as string).slice(0, colon);
+      recentCount.set(m, (recentCount.get(m) ?? 0) + 1);
+    }
+
+    const targetHex = state?.currentTargetHex ?? "";
+    const rows: AllTimeEntry[] = Object.entries(miners).map(([m, blocks]) => {
+      const recentBlocks = recentCount.get(m) ?? 0;
+      // blocks/sec in the recent window → hashrate via the standard
+      // formula. estimateNetworkHashrate takes blocks/min, so convert.
+      const bpm = (recentBlocks / RECENT_WINDOW_SEC) * 60;
+      return {
+        miner: m,
+        blocks: Number(blocks),
+        totalRewardBase: Number(rewards?.[m] ?? 0),
+        lastSeen: Number(lastSeen?.[m] ?? 0),
+        lastHeight: Number(lastHeight?.[m] ?? 0),
+        hashratePerSec: estimateNetworkHashrate(bpm, targetHex),
+      };
+    });
+
+    rows.sort((a, b) => b.blocks - a.blocks);
+    return rows.slice(0, take);
+  } catch (e) {
+    console.error("fetchAllTimeLeaderboard failed", e);
+    return [];
+  }
+}
+
+/**
+ * Paginated mined-block history. Walks `getSignaturesForAddress` with
+ * `before=<cursor>` until it has accumulated `take` mined blocks (or
+ * exhausts the program's signature history). Returns the next cursor
+ * so the UI can keep loading.
+ *
+ * `nextCursor` is the signature of the OLDEST block returned in this
+ * page; pass it back as `before` on the next call.
+ */
+export async function fetchBlocksPage(
+  before: string | undefined,
+  take: number
+): Promise<{ blocks: MinedBlock[]; nextCursor: string | null }> {
+  try {
+    const conn = readConnection();
+    const PROGRAM_ID = new PublicKey(idl.address);
+    const blocks: MinedBlock[] = [];
+    let cursor: string | undefined = before;
+    let exhausted = false;
+
+    // Cap iterations so a long history of empty rounds can't make a
+    // single page hang for minutes. After this many batches we hand
+    // back what we've got and let the client paginate further.
+    const MAX_BATCHES = 5;
+    let batchesTried = 0;
+
+    while (blocks.length < take && !exhausted && batchesTried < MAX_BATCHES) {
+      batchesTried++;
+      const opts: { limit: number; before?: string } = { limit: 200 };
+      if (cursor) opts.before = cursor;
+      const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, opts);
+      if (sigs.length === 0) {
+        exhausted = true;
+        break;
+      }
+
+      const BATCH = 10;
+      for (let i = 0; i < sigs.length; i += BATCH) {
+        const batch = sigs.slice(i, i + BATCH).filter((s) => !s.err);
+        const txs = await Promise.all(
+          batch.map((s) =>
+            conn.getTransaction(s.signature, {
+              commitment: "confirmed",
+              maxSupportedTransactionVersion: 0,
+            })
+          )
+        );
+        for (let j = 0; j < txs.length; j++) {
+          const tx = txs[j];
+          if (!tx) continue;
+          const sig = batch[j];
+          const logs = tx.meta?.logMessages ?? [];
+          const mineLog = logs.find((l) => l.includes("equium: mined block"));
+          if (!mineLog) continue;
+          const m = mineLog.match(/mined block (\d+) by ([\w]+) for (\d+)/);
+          if (!m) continue;
+          blocks.push({
+            sig: sig.signature,
+            height: Number(m[1]),
+            winner: m[2],
+            reward: Number(m[3]),
+            ts: sig.blockTime ?? 0,
+            newChallenge: "",
+          });
+          if (blocks.length >= take) break;
+        }
+        if (blocks.length >= take) break;
+      }
+
+      // If we hit the take limit, the next cursor is the last mined
+      // block's signature. Otherwise advance the cursor past the
+      // current batch's oldest sig and keep scanning.
+      cursor = sigs[sigs.length - 1].signature;
+    }
+
+    const nextCursor =
+      blocks.length > 0
+        ? blocks[blocks.length - 1].sig
+        : exhausted
+        ? null
+        : cursor ?? null;
+    return {
+      blocks,
+      nextCursor: exhausted && blocks.length === 0 ? null : nextCursor,
+    };
+  } catch (e) {
+    console.error("fetchBlocksPage failed", e);
+    return { blocks: [], nextCursor: null };
+  }
 }
 
 /** Scan up to `scan` recent program signatures and parse every mined block. */

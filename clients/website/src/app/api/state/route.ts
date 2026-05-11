@@ -15,17 +15,19 @@ import {
   fetchRecentBlocks,
   fetchLeaderboard,
   fetchHashrateSeries,
+  fetchAllTimeLeaderboard,
 } from "@/lib/rpc";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const [state, blocks, leaderboard, series] = await Promise.all([
+  const [state, blocks, leaderboard, series, alltime] = await Promise.all([
     fetchState(),
     fetchRecentBlocks(12),
     fetchLeaderboard(200, 20),
     fetchHashrateSeries(200, 30),
+    fetchAllTimeLeaderboard(50),
   ]);
 
   // If state is null we're in a degraded read (Redis empty + chain
@@ -36,7 +38,7 @@ export async function GET() {
     : "no-store";
 
   return NextResponse.json(
-    { state, blocks, leaderboard, series },
+    { state, blocks, leaderboard, series, alltime },
     { headers: { "cache-control": cacheControl } }
   );
 }

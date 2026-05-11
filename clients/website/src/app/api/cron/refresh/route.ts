@@ -15,6 +15,7 @@ import {
   fetchRecentBlocksUncached,
   fetchLeaderboardUncached,
   fetchHashrateSeriesUncached,
+  updateAllTimeAggregator,
 } from "@/lib/rpc";
 
 export const runtime = "nodejs";
@@ -46,8 +47,14 @@ export async function GET(req: NextRequest) {
     warm("equium:hashrate:200:30:v1", TTL, () =>
       fetchHashrateSeriesUncached(200, 30)
     ),
+    // Incrementally extend the all-time miner aggregator. First run
+    // scans the recent 1000 signatures and seeds the HASHes; later
+    // runs only process new ones (via the saved cursor) so the chain
+    // cost per tick stays cheap.
+    updateAllTimeAggregator(),
   ]);
 
+  const allTime = results[4];
   return NextResponse.json({
     ok: true,
     elapsed_ms: Date.now() - t0,
@@ -55,5 +62,9 @@ export async function GET(req: NextRequest) {
     blocks: results[1].status,
     leaderboard: results[2].status,
     hashrate: results[3].status,
+    alltime:
+      allTime.status === "fulfilled"
+        ? { processed: allTime.value.processed, newest: allTime.value.newest }
+        : { error: String((allTime as PromiseRejectedResult).reason) },
   });
 }

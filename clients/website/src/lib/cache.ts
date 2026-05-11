@@ -31,6 +31,13 @@ function getRedis(): Redis | null {
   return _redis;
 }
 
+/** Public accessor for callers that need direct HASH / ZSET ops
+ * (currently the all-time miner aggregator). Returns null when Redis
+ * isn't configured — callers should degrade gracefully. */
+export function getRedisClient(): Redis | null {
+  return getRedis();
+}
+
 /**
  * Read-through cache. Returns the cached value if present + fresh,
  * otherwise calls `fn`, writes the result, returns it.

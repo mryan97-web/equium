@@ -6,6 +6,7 @@ import type {
   MinedBlock,
   LeaderboardEntry,
   HashrateSeries,
+  AllTimeEntry,
 } from "@/lib/rpc";
 import { HashrateChart } from "./HashrateChart";
 import { PreLaunchPanel } from "./PreLaunchPanel";
@@ -15,23 +16,61 @@ interface Props {
   initialBlocks: MinedBlock[];
   initialLeaderboard: LeaderboardEntry[];
   initialSeries: HashrateSeries;
+  initialAllTime: AllTimeEntry[];
 }
 
-type Tab = "blocks" | "leaderboard";
+type Tab = "blocks" | "leaderboard" | "alltime";
 
 export function ExplorerDashboard({
   initialState,
   initialBlocks,
   initialLeaderboard,
   initialSeries,
+  initialAllTime,
 }: Props) {
   const [state, setState] = useState<EquiumState | null>(initialState);
   const [blocks, setBlocks] = useState<MinedBlock[]>(initialBlocks);
   const [leaderboard, setLeaderboard] =
     useState<LeaderboardEntry[]>(initialLeaderboard);
   const [series, setSeries] = useState<HashrateSeries>(initialSeries);
+  const [alltime, setAlltime] = useState<AllTimeEntry[]>(initialAllTime);
   const [tab, setTab] = useState<Tab>("blocks");
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
+
+  // Pagination: when the user clicks "Load older", we append to this
+  // array and remember the next cursor so subsequent clicks chain.
+  // Reset whenever the poll refreshes the "recent" page.
+  const [olderBlocks, setOlderBlocks] = useState<MinedBlock[]>([]);
+  const [pageCursor, setPageCursor] = useState<string | null>(
+    initialBlocks.length > 0 ? initialBlocks[initialBlocks.length - 1].sig : null
+  );
+  const [pageLoading, setPageLoading] = useState(false);
+  const [pageExhausted, setPageExhausted] = useState(false);
+
+  const loadOlder = async () => {
+    if (!pageCursor || pageLoading || pageExhausted) return;
+    setPageLoading(true);
+    try {
+      const res = await fetch(
+        `/api/blocks?before=${encodeURIComponent(pageCursor)}&limit=20`
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        blocks: MinedBlock[];
+        nextCursor: string | null;
+      };
+      if (data.blocks.length === 0 || data.nextCursor === null) {
+        setPageExhausted(true);
+      }
+      setOlderBlocks((prev) => [...prev, ...data.blocks]);
+      if (data.nextCursor) setPageCursor(data.nextCursor);
+      else setPageCursor(null);
+    } catch {
+      // Silently swallow — user can click again.
+    } finally {
+      setPageLoading(false);
+    }
+  };
 
   // Poll for fresh data every 10 seconds
   useEffect(() => {
@@ -43,9 +82,19 @@ export function ExplorerDashboard({
         const data = await res.json();
         if (cancelled) return;
         if (data.state) setState(data.state);
-        if (data.blocks) setBlocks(data.blocks);
+        if (data.blocks) {
+          setBlocks(data.blocks);
+          // Recent-page changed: discard older pagination state so
+          // the "Load older" cursor starts from the new tail.
+          if (data.blocks.length > 0) {
+            setPageCursor(data.blocks[data.blocks.length - 1].sig);
+            setOlderBlocks([]);
+            setPageExhausted(false);
+          }
+        }
         if (data.leaderboard) setLeaderboard(data.leaderboard);
         if (data.series) setSeries(data.series);
+        if (data.alltime) setAlltime(data.alltime);
         setLastUpdated(Date.now());
       } catch {}
     };
@@ -208,7 +257,7 @@ export function ExplorerDashboard({
         </div>
       </div>
 
-      {/* Tabbed section: Recent blocks / Leaderboard */}
+      {/* Tabbed section: Recent blocks / Top miners (recent) / Top miners (all-time) */}
       <div className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-panel)] overflow-hidden">
         <div className="flex items-center justify-between px-7 py-5 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-1 rounded-full bg-[var(--color-bg)] border border-[var(--color-border)] p-1">
@@ -230,25 +279,39 @@ export function ExplorerDashboard({
                   : "text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]"
               }`}
             >
-              Top miners
+              Recent miners
+            </button>
+            <button
+              onClick={() => setTab("alltime")}
+              className={`px-4 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
+                tab === "alltime"
+                  ? "bg-[var(--color-rose)] text-[var(--color-bg)]"
+                  : "text-[var(--color-fg-dim)] hover:text-[var(--color-fg)]"
+              }`}
+            >
+              All-time
             </button>
           </div>
           <span className="text-[11px] font-mono text-[var(--color-fg-dim)]">
             {tab === "blocks"
-              ? `showing ${blocks.length}`
-              : `${leaderboard.length} miners`}
+              ? `showing ${blocks.length + olderBlocks.length}`
+              : tab === "leaderboard"
+              ? `${leaderboard.length} miners`
+              : `${alltime.length} all-time`}
           </span>
         </div>
 
         {tab === "leaderboard" ? (
           <LeaderboardList rows={leaderboard} />
+        ) : tab === "alltime" ? (
+          <AllTimeList rows={alltime} />
         ) : blocks.length === 0 ? (
           <div className="text-center py-16 text-[var(--color-fg-dim)]">
             No blocks mined yet — be the first.
           </div>
         ) : (
           <div className="divide-y divide-[var(--color-border)]">
-            {blocks.map((b) => (
+            {[...blocks, ...olderBlocks].map((b) => (
               <div
                 key={b.sig}
                 className="px-7 py-5 grid grid-cols-12 gap-4 items-center hover:bg-[var(--color-bg-elev)]/50 transition-colors"
@@ -306,6 +369,22 @@ export function ExplorerDashboard({
                 </div>
               </div>
             ))}
+            {tab === "blocks" && pageCursor && !pageExhausted && (
+              <div className="px-7 py-5 text-center">
+                <button
+                  onClick={loadOlder}
+                  disabled={pageLoading}
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-full border border-[var(--color-border-bright)] text-[13px] font-semibold text-[var(--color-fg-soft)] hover:bg-[var(--color-bg-elev)] hover:border-[var(--color-rose-soft)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {pageLoading ? "Loading…" : "Load older blocks →"}
+                </button>
+              </div>
+            )}
+            {tab === "blocks" && pageExhausted && (
+              <div className="px-7 py-5 text-center text-[12px] font-mono text-[var(--color-fg-dim)]">
+                End of history — genesis round reached.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -333,6 +412,127 @@ function AddrRow({ label, value }: { label: string; value: string }) {
       <span className="text-[var(--color-fg-soft)] break-all">{value}</span>
     </div>
   );
+}
+
+function AllTimeList({ rows }: { rows: AllTimeEntry[] }) {
+  if (rows.length === 0) {
+    return (
+      <div className="text-center py-16 text-[var(--color-fg-dim)]">
+        All-time stats warming up — first cron sweep takes a minute.
+      </div>
+    );
+  }
+
+  const maxBlocks = Math.max(...rows.map((r) => r.blocks));
+  const medalFor = (i: number) =>
+    i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+
+  return (
+    <div className="divide-y divide-[var(--color-border)]">
+      {rows.map((row, i) => {
+        const medal = medalFor(i);
+        const widthPct = (row.blocks / maxBlocks) * 100;
+        const hps = formatHps(row.hashratePerSec);
+        return (
+          <div
+            key={row.miner}
+            className="px-7 py-5 grid grid-cols-12 gap-4 items-center hover:bg-[var(--color-bg-elev)]/50 transition-colors"
+          >
+            <div className="col-span-2 md:col-span-1 flex items-center gap-2">
+              <span
+                className={`text-[18px] font-mono font-bold ${
+                  i === 0
+                    ? "text-[var(--color-gold)]"
+                    : i === 1
+                      ? "text-[var(--color-fg-soft)]"
+                      : i === 2
+                        ? "text-[var(--color-rose)]"
+                        : "text-[var(--color-fg-dim)]"
+                }`}
+              >
+                #{i + 1}
+              </span>
+              {medal && <span className="text-[18px]">{medal}</span>}
+            </div>
+
+            <div className="col-span-10 md:col-span-3">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Miner
+              </div>
+              <a
+                href={`https://explorer.solana.com/address/${row.miner}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[13px] font-mono text-[var(--color-teal)] hover:text-[var(--color-rose)] transition-colors break-all"
+              >
+                {shortPk(row.miner)}
+              </a>
+            </div>
+
+            <div className="col-span-6 md:col-span-3">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Blocks
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[18px] font-mono font-bold text-[var(--color-rose)]">
+                  {row.blocks}
+                </span>
+                <div className="flex-1 h-1.5 rounded-full bg-[var(--color-bg)] overflow-hidden ml-2">
+                  <div
+                    className="h-full rounded-full bg-[var(--color-rose)] transition-all"
+                    style={{ width: `${Math.max(widthPct, 4)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="col-span-3 md:col-span-2">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Earned
+              </div>
+              <div className="text-[14px] font-mono font-bold text-[var(--color-gold)]">
+                {formatEqm(row.totalRewardBase)} EQM
+              </div>
+            </div>
+
+            <div className="col-span-3 md:col-span-3 text-right">
+              <div className="text-[10px] font-mono uppercase tracking-[0.15em] text-[var(--color-fg-dim)] mb-0.5">
+                Hashrate (1h)
+              </div>
+              <div
+                className={`text-[14px] font-mono font-bold ${
+                  row.hashratePerSec > 0
+                    ? "text-[var(--color-mint)]"
+                    : "text-[var(--color-fg-dim)]"
+                }`}
+              >
+                {hps}
+              </div>
+              <div className="text-[11px] text-[var(--color-fg-dim)]">
+                last #{row.lastHeight}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Compact hashrate formatter — H/s, kH/s, MH/s, etc. Mirrors the one
+ * in HashrateChart but exported standalone since this file doesn't
+ * import HashrateChart's internals. */
+function formatHps(hps: number): string {
+  if (!Number.isFinite(hps) || hps <= 0) return "—";
+  const units = ["H/s", "kH/s", "MH/s", "GH/s", "TH/s"];
+  let v = hps;
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  const value = v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+  return `${value} ${units[i]}`;
 }
 
 function LeaderboardList({ rows }: { rows: LeaderboardEntry[] }) {

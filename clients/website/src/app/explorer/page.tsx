@@ -6,6 +6,7 @@ import {
   fetchRecentBlocks,
   fetchLeaderboard,
   fetchHashrateSeries,
+  fetchAllTimeLeaderboard,
 } from "@/lib/rpc";
 
 export const revalidate = 0;
@@ -43,11 +44,12 @@ export const metadata = {
 };
 
 export default async function ExplorerPage() {
-  const [state, blocks, leaderboard, series] = await Promise.all([
+  const [state, blocks, leaderboard, series, alltime] = await Promise.all([
     fetchState(),
     fetchRecentBlocks(12),
     fetchLeaderboard(200, 20),
     fetchHashrateSeries(200, 30),
+    fetchAllTimeLeaderboard(50),
   ]);
 
   return (
@@ -60,6 +62,7 @@ export default async function ExplorerPage() {
             initialBlocks={blocks}
             initialLeaderboard={leaderboard}
             initialSeries={series}
+            initialAllTime={alltime}
           />
         </div>
       </div>
