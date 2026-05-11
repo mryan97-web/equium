@@ -19,6 +19,7 @@ use equihash_core::challenge::I_LEN;
 use std::time::Instant;
 
 mod gpu;
+mod shader_ref;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Equium GPU miner")]
@@ -35,6 +36,14 @@ enum Cmd {
         /// How many leaves to verify. Default 2048 keeps the test fast
         /// (~ms) while still catching most byte-level shader bugs.
         #[arg(long, default_value_t = 2048u32)]
+        leaves: u32,
+    },
+    /// Validate the shader *logic* without needing a GPU. Runs the
+    /// pure-Rust port of leaves.wgsl against blake2b_simd byte-for-byte.
+    /// If this fails, the WGSL kernel is wrong; if it passes, you can
+    /// trust the GPU path to be correct barring a driver bug.
+    VerifyCpu {
+        #[arg(long, default_value_t = 8192u32)]
         leaves: u32,
     },
     /// Benchmark GPU leaf-generation throughput at full Equihash 96,5
@@ -54,6 +63,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     match args.cmd {
         Cmd::Verify { leaves } => verify(leaves),
+        Cmd::VerifyCpu { leaves } => verify_cpu(leaves),
         Cmd::Bench { iterations } => bench(iterations),
         Cmd::Mine => {
             println!("mining loop not wired up yet. v0 only covers leaf generation —");
@@ -129,6 +139,59 @@ fn verify(n_leaves: u32) -> Result<()> {
             println!("  cpu: {}", hex::encode(c));
         }
         bail!("{} leaves differ between GPU and CPU", mismatches);
+    }
+}
+
+/// CPU-only validation. Compares the Rust port of the shader logic
+/// (src/shader_ref.rs) against the canonical blake2b_simd output. Catches
+/// shader-logic bugs (arithmetic, packing, control flow) without
+/// needing a GPU at all.
+fn verify_cpu(n_leaves: u32) -> Result<()> {
+    let (input, nonce) = fixed_test_input();
+
+    let t_ref = Instant::now();
+    let cpu_out = cpu_leaves_reference(&input, &nonce, n_leaves);
+    let cpu_ms = t_ref.elapsed().as_millis();
+
+    let t_shader = Instant::now();
+    let shader_out = shader_ref::leaves(&input, &nonce, n_leaves);
+    let shader_ms = t_shader.elapsed().as_millis();
+
+    let mut mismatches = 0usize;
+    let mut first_mismatch_at = None;
+    for i in 0..(n_leaves as usize) {
+        let g = &shader_out[i * gpu::LEAF_BYTES..(i + 1) * gpu::LEAF_BYTES];
+        let c = &cpu_out[i * gpu::LEAF_BYTES..(i + 1) * gpu::LEAF_BYTES];
+        if g != c {
+            mismatches += 1;
+            if first_mismatch_at.is_none() {
+                first_mismatch_at = Some(i);
+            }
+        }
+    }
+
+    println!(
+        "leaves: {}   shader-port: {:>4}ms   blake2b_simd ref: {:>4}ms   match: {}/{}",
+        n_leaves,
+        shader_ms,
+        cpu_ms,
+        n_leaves as usize - mismatches,
+        n_leaves
+    );
+
+    if mismatches == 0 {
+        println!("✓ shader logic matches BLAKE2b reference byte-for-byte.");
+        println!("  GPU path should be correct on real hardware (subject to driver).");
+        Ok(())
+    } else {
+        if let Some(i) = first_mismatch_at {
+            let g = &shader_out[i * gpu::LEAF_BYTES..(i + 1) * gpu::LEAF_BYTES];
+            let c = &cpu_out[i * gpu::LEAF_BYTES..(i + 1) * gpu::LEAF_BYTES];
+            println!("first mismatch at leaf {i}:");
+            println!("  shader-port: {}", hex::encode(g));
+            println!("  blake2b ref: {}", hex::encode(c));
+        }
+        bail!("{} leaves differ between shader logic and BLAKE2b reference", mismatches);
     }
 }
 
