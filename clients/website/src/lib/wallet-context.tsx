@@ -35,6 +35,10 @@ interface WalletState {
 interface WalletActions {
   /** Create a fresh keypair, encrypt with password, persist. */
   createWithPassword: (password: string) => Promise<LoadedWallet>;
+  /** Install an already-generated keypair (e.g. one the user has just
+   * backed up via the setup wizard). Encrypts + persists, transitions to
+   * the "unlocked" state. */
+  adoptKeypair: (kp: Keypair, password: string) => Promise<LoadedWallet>;
   /** Import a secret key string + encrypt with password. */
   importWithPassword: (secretInput: string, password: string) => Promise<LoadedWallet>;
   /** Decrypt the stored wallet using password. */
@@ -115,6 +119,18 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [installWallet, setError]
   );
 
+  const adoptKeypair = useCallback(
+    async (kp: Keypair, password: string) => {
+      try {
+        return await installWallet(kp, password);
+      } catch (e: any) {
+        setError(String(e?.message ?? e));
+        throw e;
+      }
+    },
+    [installWallet, setError]
+  );
+
   const importWithPassword = useCallback(
     async (secretInput: string, password: string) => {
       try {
@@ -186,6 +202,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ...state,
       createWithPassword,
+      adoptKeypair,
       importWithPassword,
       unlock,
       lock,
@@ -197,6 +214,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [
       state,
       createWithPassword,
+      adoptKeypair,
       importWithPassword,
       unlock,
       lock,

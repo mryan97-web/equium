@@ -29,11 +29,12 @@ export function SetupWizard() {
     if (!draftKp) return;
     setBusy(true);
     try {
-      // Persist using the draft keypair directly
-      const { persistWallet } = await import("@/lib/wallet-crypto");
-      await persistWallet(draftKp, password);
-      // Force a context reload by re-running the unlock path
-      await wallet.unlock(password);
+      // Install the exact keypair we just showed the user as backup —
+      // can't go through createWithPassword because that generates a new
+      // keypair internally.
+      await wallet.adoptKeypair(draftKp, password);
+    } catch {
+      // error surfaced via wallet.error
     } finally {
       setBusy(false);
     }
