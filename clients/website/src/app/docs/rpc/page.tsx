@@ -1,11 +1,10 @@
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
-import { RpcSettings } from "@/components/RpcSettings";
 
 export const metadata = {
-  title: "Get an RPC endpoint",
+  title: "Set up an RPC for the desktop miner",
   description:
-    "How to grab a free Helius RPC endpoint for the Equium browser miner or CLI.",
+    "How to grab a free Helius RPC endpoint and plug it into the Equium desktop miner.",
 };
 
 export default function RpcDocsPage() {
@@ -15,16 +14,24 @@ export default function RpcDocsPage() {
       <div className="pt-32 pb-16 px-6">
         <div className="max-w-3xl mx-auto">
           <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-[var(--color-rose)] mb-3 font-semibold">
-            — Setup guide —
+            — Desktop miner setup —
           </div>
           <h1 className="text-[44px] md:text-[60px] font-black tracking-[-0.03em] leading-[1] mb-5">
-            Get your own RPC.
+            Plug in your RPC.
           </h1>
-          <p className="text-[17px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-12">
-            The Equium desktop miner runs against your own Solana RPC endpoint.
-            The browser miner uses ours by default, but you can plug in a
-            personal endpoint for unlimited throughput. Either way: free, 5
-            minutes, no credit card.
+          <p className="text-[17px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-6">
+            The Equium desktop miner needs a Solana RPC endpoint to read
+            on-chain state and submit mining transactions. The public Solana
+            endpoint works but is heavily rate-limited; a free Helius key takes
+            5 minutes and gives you 100k requests/day — more than enough for a
+            laptop mining around the clock.
+          </p>
+          <p className="text-[15px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-12">
+            <span className="font-semibold text-[var(--color-fg)]">
+              Mining in the browser instead?
+            </span>{" "}
+            You don't need to do any of this — equium.xyz proxies RPC for you.
+            This guide is only for the native desktop app.
           </p>
 
           <Step
@@ -41,9 +48,9 @@ export default function RpcDocsPage() {
                 >
                   helius.dev
                 </a>{" "}
-                and sign up. They have a free tier with{" "}
+                and sign up. The free tier gives you{" "}
                 <span className="font-mono font-bold">100,000 requests/day</span>{" "}
-                — more than enough for a single laptop mining around the clock.
+                — comfortable for a single CPU mining 24/7.
               </>
             }
           />
@@ -65,33 +72,34 @@ export default function RpcDocsPage() {
 
           <Step
             n={3}
-            title="Paste it below"
+            title="Paste it into the desktop app"
             body={
               <>
-                Drop the URL in. It's stored only in your browser's
-                localStorage and used for every RPC call the miner makes — we
-                never see your key.
+                Open Equium Miner, click <Kbd>Settings</Kbd> in the top-right,
+                drop the URL into <span className="font-semibold">Custom RPC URL</span>,
+                and save. It's stored locally in the app's data folder — never
+                transmitted anywhere except to Helius itself.
               </>
             }
           />
 
-          <div className="mt-4 mb-16">
-            <RpcSettings />
-          </div>
-
-          <Callout title="What about the desktop app?">
-            The Mac/Windows installer ships with the same wizard inside —
-            during onboarding you'll be asked to paste this URL, and it's saved
-            in your local app settings (no server, no telemetry).
+          <Callout title="Don't have the desktop app yet?">
+            <a
+              href="/download"
+              className="text-[var(--color-rose)] font-semibold hover:underline"
+            >
+              Grab the installer →
+            </a>{" "}
+            macOS, Windows, and Linux builds. Built-in encrypted wallet, no
+            extension required.
           </Callout>
 
-          <Callout title="Why don't you provide RPC for everyone?" tone="dim">
-            RPC providers charge per request. A single browser miner running
-            for an hour can make ~10,000 RPC calls. At scale that's tens of
-            millions of requests per day across all users — well past any free
-            tier. Hosting our own proxy with strict per-IP limits is the
-            compromise: it works for casual miners but rate-limits the heavy
-            users into bringing their own.
+          <Callout title="Why does the browser miner not need this?" tone="dim">
+            equium.xyz fronts a server-side RPC proxy with per-IP rate limits.
+            That's affordable for the small amount of traffic a casual browser
+            miner generates. The desktop miner mines harder and more
+            consistently — that level of throughput costs real money in RPC
+            fees, so it's on the user to bring their own key.
           </Callout>
         </div>
       </div>
@@ -167,9 +175,9 @@ function Callout({
       >
         {title}
       </h4>
-      <p className="text-[14px] leading-[1.6] text-[var(--color-fg-dim)]">
+      <div className="text-[14px] leading-[1.6] text-[var(--color-fg-dim)]">
         {children}
-      </p>
+      </div>
     </div>
   );
 }
