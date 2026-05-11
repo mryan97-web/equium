@@ -288,7 +288,7 @@ export function startMiner(opts: MinerOptions): MinerHandle {
           tryInRound = 0;
           cb.log(
             "info",
-            `round #${cfg.blockHeight.toString()} opened — reward ${formatBase(cfg.currentEpochReward)} EQM`
+            `round #${cfg.blockHeight.toString()} open · first valid solution wins ${formatBase(cfg.currentEpochReward)} EQM`
           );
         }
 

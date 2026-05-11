@@ -166,7 +166,7 @@ fn main() -> Result<()> {
             last_advance_attempt_at = None;
             println!();
             println!(
-                "   {}round #{}{}   {}reward {} EQM{}   {}target 0x{}…{}",
+                "   {}round #{}{}   {}prize {} EQM{}   {}target 0x{}…{}",
                 C_BOLD, cfg.block_height, C_RESET,
                 C_DIM, format_reward(cfg.current_epoch_reward), C_RESET,
                 C_DIM, hex::encode(&cfg.current_target[..4]), C_RESET,

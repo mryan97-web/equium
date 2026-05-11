@@ -268,7 +268,7 @@ fn run_mining_loop(
                 &app,
                 "info",
                 format!(
-                    "round #{} opened · reward {} EQM",
+                    "round #{} open · first valid solution wins {} EQM",
                     cfg.block_height,
                     format_base(cfg.current_epoch_reward)
                 ),
