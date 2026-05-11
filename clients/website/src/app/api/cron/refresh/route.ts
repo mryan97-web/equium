@@ -16,8 +16,15 @@ import {
   fetchLeaderboardUncached,
   fetchHashrateSeriesUncached,
   fetchAllTimeLeaderboardUncached,
-  updateAllTimeAggregator,
 } from "@/lib/rpc";
+
+// NOTE: this route no longer calls `updateAllTimeAggregator`. The
+// all-time miner index is owned by the standalone indexer process
+// (scripts/indexer.ts) running continuously on the server — Vercel
+// cron is unreliable for our use case (Hobby tier rate-limits, cold
+// starts) and a server-side indexer can walk the entire history from
+// genesis on first run. Cron is reduced to pre-warming the read-side
+// caches so /api/state stays snappy.
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,24 +55,15 @@ export async function GET(req: NextRequest) {
     warm("equium:hashrate:200:30:v1", TTL, () =>
       fetchHashrateSeriesUncached(200, 30)
     ),
-    // Incrementally extend the all-time miner aggregator. First run
-    // scans the recent 1000 signatures and seeds the HASHes; later
-    // runs only process new ones (via the saved cursor) so the chain
-    // cost per tick stays cheap.
-    updateAllTimeAggregator(),
+    // Read-side: re-render the all-time top-50 from whatever the
+    // indexer has populated. We don't write any new history here.
+    warm(
+      "equium:alltime:top:50:v1",
+      TTL,
+      () => fetchAllTimeLeaderboardUncached(50)
+    ),
   ]);
 
-  // After the aggregator has run, pre-render the cached top-50 from
-  // the freshly-updated Redis state. Subsequent /api/state requests
-  // read this cached blob instead of redoing the ZREVRANGE + HMGET
-  // assembly per request.
-  const topResult = await warm(
-    "equium:alltime:top:50:v1",
-    TTL,
-    () => fetchAllTimeLeaderboardUncached(50)
-  );
-
-  const allTime = results[4];
   return NextResponse.json({
     ok: true,
     elapsed_ms: Date.now() - t0,
@@ -73,11 +71,6 @@ export async function GET(req: NextRequest) {
     blocks: results[1].status,
     leaderboard: results[2].status,
     hashrate: results[3].status,
-    alltime:
-      allTime.status === "fulfilled"
-        ? { processed: allTime.value.processed, newest: allTime.value.newest }
-        : { error: String((allTime as PromiseRejectedResult).reason) },
-    alltime_top:
-      topResult && Array.isArray(topResult) ? topResult.length : 0,
+    alltime_top: results[4].status,
   });
 }

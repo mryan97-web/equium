@@ -1,0 +1,43 @@
+[Unit]
+# Equium explorer indexer — continuous sync from chain to Upstash Redis.
+# Replaces the previous Vercel-cron-based aggregator with a daemon that
+# can walk the full signature history and stay live across deploys.
+#
+# Install:
+#   sudo cp scripts/indexer.service /etc/systemd/system/equium-indexer.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now equium-indexer.service
+#
+# Watch:
+#   sudo journalctl -u equium-indexer -f
+#
+# Reindex from scratch (one-shot, wipes Redis aggregator state):
+#   sudo systemctl stop equium-indexer
+#   cd /home/ubuntu/Equium && REINDEX=1 npx tsx scripts/indexer.ts
+#   # ...wait for "full backfill complete"...
+#   sudo systemctl start equium-indexer
+
+Description=Equium explorer indexer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Equium
+ExecStart=/usr/bin/env npx tsx scripts/indexer.ts
+Restart=always
+# Slow restart on tight crash loops so we don't hammer Helius if
+# something's structurally wrong.
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=equium-indexer
+
+# Resource caps — the indexer is mostly I/O bound (HTTP + Redis), so
+# these are loose. Tighten if needed.
+LimitNOFILE=4096
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

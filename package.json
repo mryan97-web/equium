@@ -9,7 +9,9 @@
   "dependencies": {
     "@coral-xyz/anchor": "0.31.1",
     "@solana/spl-token": "^0.4.14",
-    "@solana/web3.js": "^1.95.0"
+    "@solana/web3.js": "^1.95.0",
+    "@upstash/redis": "^1.38.0",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@types/bn.js": "^5.1.5",
