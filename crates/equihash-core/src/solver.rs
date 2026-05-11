@@ -168,73 +168,96 @@ fn compress_indices(n: u32, k: u32, indices: &[u32]) -> Vec<u8> {
     out
 }
 
+/// Pre-built base BLAKE2b state for a given (n, k, input). Computed once
+/// per round and cloned per-nonce — the per-clone cost is much lower than
+/// re-running the personalization + input update each attempt.
+pub struct BaseState {
+    pub state: Blake2bState,
+    pub n: u32,
+    pub k: u32,
+}
+
+impl BaseState {
+    pub fn new(n: u32, k: u32, input: &[u8; I_LEN]) -> Result<Self, SolveError> {
+        if n == 0 || k == 0 || n % 8 != 0 || n % (k + 1) != 0 || k >= n {
+            return Err(SolveError::InvalidParams);
+        }
+        let hash_output = hash_output_len(n) as u8;
+        let mut state = init_state(n, k, hash_output);
+        state.update(input);
+        Ok(Self { state, n, k })
+    }
+}
+
+/// Try a single nonce against a pre-built `BaseState`. Returns the solution
+/// indices if this nonce yields a valid Equihash solution, `None` otherwise.
+///
+/// Cheaper for repeated calls than `solve()` because the base state is built
+/// once and reused. The unit of work is one Wagner search — the caller drives
+/// nonce selection and parallelism.
+pub fn try_nonce(base: &BaseState, input: &[u8; I_LEN], nonce: &[u8; 32]) -> Option<Vec<u8>> {
+    let n = base.n;
+    let k = base.k;
+    let cbits = cbits_of(n, k);
+    let cbytes = cbytes_of(n, k);
+    let n_init: u32 = 1u32 << (cbits + 1);
+
+    let mut state_with_nonce = base.state.clone();
+    state_with_nonce.update(nonce);
+
+    let mut rows: Vec<Row> = (0..n_init)
+        .map(|i| Row {
+            hash: generate_leaf_hash(&state_with_nonce, n, i),
+            indices: vec![i],
+        })
+        .collect();
+
+    for _ in 0..k {
+        rows = round(rows, cbits);
+        if rows.is_empty() {
+            return None;
+        }
+        let _ = cbytes; // already used inside `round`
+    }
+
+    let target_indices_len = 1usize << k;
+    for row in rows {
+        if row.indices.len() != target_indices_len {
+            continue;
+        }
+        if !row.hash.iter().all(|&b| b == 0) {
+            continue;
+        }
+        let compressed = compress_indices(n, k, &row.indices);
+        if equihash::is_valid_solution(n, k, input, nonce, &compressed).is_ok() {
+            return Some(compressed);
+        }
+    }
+    None
+}
+
 /// Solve Equihash for the given (n, k) and base input bytes.
 ///
-/// Algorithm: generate `2^(cbits+1)` initial leaves; run `k` Wagner rounds
-/// (each pairs on `cbits` and trims `cbytes` from the hash); after the
-/// final round, scan remaining rows for one whose residual hash is all
-/// zero — that's a candidate solution. Re-verify via `equihash::is_valid_solution`
-/// before returning.
+/// Sequential driver kept for backward compat with single-threaded callers
+/// (the WASM solver in the browser miner uses this). Multi-threaded callers
+/// should use `BaseState::new` + `try_nonce` and parallelize at the
+/// nonce-selection level.
 pub fn solve<F>(n: u32, k: u32, input: &[u8; I_LEN], mut next_nonce: F) -> Result<Solution, SolveError>
 where
     F: FnMut() -> Option<[u8; 32]>,
 {
-    if n == 0 || k == 0 || n % 8 != 0 || n % (k + 1) != 0 || k >= n {
-        return Err(SolveError::InvalidParams);
-    }
-
-    let cbits = cbits_of(n, k);
-    let cbytes = cbytes_of(n, k);
-    let hash_output = hash_output_len(n) as u8;
-    let n_init: u32 = 1u32 << (cbits + 1);
-
-    let mut base_state = init_state(n, k, hash_output);
-    base_state.update(input);
+    let base = BaseState::new(n, k, input)?;
 
     loop {
         let nonce = match next_nonce() {
             Some(nn) => nn,
             None => return Err(SolveError::NoSolutionFound),
         };
-
-        let mut state_with_nonce = base_state.clone();
-        state_with_nonce.update(&nonce);
-
-        let mut rows: Vec<Row> = (0..n_init)
-            .map(|i| Row {
-                hash: generate_leaf_hash(&state_with_nonce, n, i),
-                indices: vec![i],
-            })
-            .collect();
-
-        for _ in 0..k {
-            rows = round(rows, cbits);
-            if rows.is_empty() {
-                break;
-            }
-        }
-
-        if rows.is_empty() {
-            continue;
-        }
-
-        // After k rounds the residual hash is `cbits` bits. Candidates are
-        // rows whose residual hash is all zero AND have exactly 2^k indices.
-        let target_indices_len = 1usize << k;
-        for row in rows {
-            if row.indices.len() != target_indices_len {
-                continue;
-            }
-            if !row.hash.iter().all(|&b| b == 0) {
-                continue;
-            }
-            let compressed = compress_indices(n, k, &row.indices);
-            if equihash::is_valid_solution(n, k, input, &nonce, &compressed).is_ok() {
-                return Ok(Solution {
-                    nonce,
-                    soln_indices: compressed,
-                });
-            }
+        if let Some(soln_indices) = try_nonce(&base, input, &nonce) {
+            return Ok(Solution {
+                nonce,
+                soln_indices,
+            });
         }
     }
 }

@@ -11,6 +11,8 @@
 
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anchor_lang::prelude::AccountMeta;
@@ -18,8 +20,9 @@ use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
+use crossbeam_channel::{bounded, RecvTimeoutError};
 use equihash_core::challenge::{build_input, solution_hash};
-use equihash_core::solver::solve;
+use equihash_core::solver::{try_nonce, BaseState};
 use equihash_core::target::hash_under_target;
 use equium::state::{EquiumConfig, CONFIG_SEED, VAULT_SEED};
 use rand::RngCore;
@@ -58,9 +61,16 @@ struct Args {
     #[arg(long, default_value_t = 1_400_000u32)]
     cu_limit: u32,
 
-    /// Cap on nonce attempts per round before giving up and re-fetching state.
+    /// Cap on nonce attempts per worker thread before refetching state.
+    /// Total attempts per round ≈ threads × this value.
     #[arg(long, default_value_t = 4096u64)]
     max_nonces_per_round: u64,
+
+    /// Number of solver threads. Defaults to all physical cores. Each thread
+    /// independently grinds nonces; first to find a below-target solution
+    /// wins the round.
+    #[arg(long, short = 't', default_value_t = 0)]
+    threads: usize,
 }
 
 // ANSI styling shortcuts. Colors are picked to look good against either a
@@ -206,46 +216,56 @@ fn main() -> Result<()> {
             &miner.to_bytes(),
             cfg.block_height,
         );
-        let mut rng = rand::thread_rng();
-        let mut counter = 0u64;
-        let solution = solve(cfg.equihash_n, cfg.equihash_k, &input, || {
-            counter += 1;
-            if counter > args.max_nonces_per_round {
-                return None;
-            }
-            let mut nonce = [0u8; 32];
-            rng.fill_bytes(&mut nonce);
-            Some(nonce)
-        });
+        let thread_count = if args.threads == 0 {
+            num_cpus::get().max(1)
+        } else {
+            args.threads
+        };
 
-        let solution = match solution {
-            Ok(s) => s,
-            Err(_) => {
-                println!("   {}solver gave up; refreshing{}", C_GRAY, C_RESET);
-                std::thread::sleep(Duration::from_millis(500));
+        // Race N worker threads against the same target. First below-target
+        // solution wins the round; others abort via the shared stop flag.
+        let solution = match race_for_solution(
+            cfg.equihash_n,
+            cfg.equihash_k,
+            &input,
+            &cfg.current_target,
+            thread_count,
+            args.max_nonces_per_round,
+        ) {
+            Some((sol, nonces_tried)) => {
+                total_nonces = total_nonces.saturating_add(nonces_tried);
+                sol
+            }
+            None => {
+                // No below-target nonce in this budget. Bump the counter,
+                // refetch config, try again.
+                total_nonces = total_nonces.saturating_add(
+                    args.max_nonces_per_round * thread_count as u64,
+                );
+                try_in_round += 1;
+                let solve_ms = solve_started.elapsed().as_millis() as u64;
+                let session_secs = started_at.elapsed().as_secs_f64().max(0.001);
+                let hashrate = total_nonces as f64 / session_secs;
+                println!(
+                    "     {}· try #{}{}   {}exhausted{}        {}{}ms{}   {}{}{}",
+                    C_GRAY, try_in_round, C_RESET,
+                    C_DIM, C_RESET,
+                    C_DIM, solve_ms, C_RESET,
+                    C_GOLD, fmt_hashrate(hashrate), C_RESET,
+                );
                 continue;
             }
         };
         let solve_ms = solve_started.elapsed().as_millis() as u64;
         try_in_round += 1;
-        total_nonces = total_nonces.saturating_add(counter);
 
         let session_secs = started_at.elapsed().as_secs_f64().max(0.001);
         let hashrate = total_nonces as f64 / session_secs;
 
-        // Off-chain target check — saves an RPC roundtrip for solutions
-        // that the on-chain verifier would reject as AboveTarget.
+        // Sanity: re-verify off-chain that the winning solution is under target.
         let cand_hash = solution_hash(&solution.soln_indices, &input);
-        if !hash_under_target(&cand_hash, &cfg.current_target) {
-            println!(
-                "     {}· try #{}{}   {}above target{}        {}{}ms{}   {}{}{}",
-                C_GRAY, try_in_round, C_RESET,
-                C_DIM, C_RESET,
-                C_DIM, solve_ms, C_RESET,
-                C_GOLD, fmt_hashrate(hashrate), C_RESET,
-            );
-            continue;
-        }
+        debug_assert!(hash_under_target(&cand_hash, &cfg.current_target));
+        let _ = cand_hash;
 
         match submit_mine(
             &rpc,
@@ -407,6 +427,76 @@ fn fetch_config(rpc: &RpcClient, config_pda: &Pubkey) -> Result<EquiumConfig> {
     let mut data = acct.data.as_slice();
     let cfg = EquiumConfig::try_deserialize(&mut data)?;
     Ok(cfg)
+}
+
+struct RaceWinner {
+    nonce: [u8; 32],
+    soln_indices: Vec<u8>,
+}
+
+/// Spawn `threads` solver workers and race them to find a nonce whose
+/// Equihash solution falls under `target`. Each worker grinds up to
+/// `max_per_thread` nonces before giving up. Returns the winning solution
+/// plus the total number of nonces actually tried (across all threads)
+/// so the caller can update its hashrate counter.
+fn race_for_solution(
+    n: u32,
+    k: u32,
+    input: &[u8; equihash_core::challenge::I_LEN],
+    target: &[u8; 32],
+    threads: usize,
+    max_per_thread: u64,
+) -> Option<(RaceWinner, u64)> {
+    let base = std::sync::Arc::new(BaseState::new(n, k, input).ok()?);
+    let stop = Arc::new(AtomicBool::new(false));
+    let total_nonces = Arc::new(AtomicU64::new(0));
+    let (tx, rx) = bounded::<RaceWinner>(1);
+
+    let mut handles = Vec::with_capacity(threads);
+    for _ in 0..threads {
+        let base = base.clone();
+        let input = *input;
+        let target = *target;
+        let stop = stop.clone();
+        let total = total_nonces.clone();
+        let tx = tx.clone();
+        let max = max_per_thread;
+        handles.push(std::thread::spawn(move || {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            let mut tried: u64 = 0;
+            while tried < max && !stop.load(Ordering::Relaxed) {
+                let mut nonce = [0u8; 32];
+                rng.fill(&mut nonce);
+                tried += 1;
+                if let Some(soln) = try_nonce(&base, &input, &nonce) {
+                    let h = solution_hash(&soln, &input);
+                    if hash_under_target(&h, &target) {
+                        // Best-effort send; if the channel is closed the
+                        // race is already over.
+                        let _ = tx.send(RaceWinner {
+                            nonce,
+                            soln_indices: soln,
+                        });
+                        stop.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                }
+            }
+            total.fetch_add(tried, Ordering::Relaxed);
+        }));
+    }
+    drop(tx);
+
+    // Wait for either a winner or all threads to exhaust their budget.
+    let winner = rx.recv_timeout(Duration::from_secs(600)).ok();
+    stop.store(true, Ordering::Relaxed);
+    for h in handles {
+        let _ = h.join();
+    }
+
+    let nonces_tried = total_nonces.load(Ordering::Relaxed);
+    winner.map(|w| (w, nonces_tried))
 }
 
 #[allow(clippy::too_many_arguments)]

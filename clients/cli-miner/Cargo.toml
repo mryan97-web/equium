@@ -25,3 +25,5 @@ env_logger = "0.11"
 rand = { workspace = true }
 hex = { workspace = true }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+num_cpus = "1"
+crossbeam-channel = "0.5"
