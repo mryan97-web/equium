@@ -15,6 +15,7 @@ import { startMiner, type MinerHandle } from "@/lib/miner-engine";
 import { RPC_URL } from "@/lib/rpc";
 import { ShareCardModal } from "./ShareCardModal";
 import { PreLaunchPanel } from "./PreLaunchPanel";
+import { RpcGate, hasRpcOverride } from "./RpcGate";
 import { WalletMenu } from "./wallet/WalletMenu";
 import { SendModal } from "./wallet/SendModal";
 
@@ -69,6 +70,11 @@ export function MineDashboard() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [hasRpc, setHasRpc] = useState(false);
+
+  useEffect(() => {
+    setHasRpc(hasRpcOverride());
+  }, []);
 
   const minerHandle = useRef<MinerHandle | null>(null);
   const logsRef = useRef<HTMLDivElement>(null);
@@ -219,6 +225,13 @@ export function MineDashboard() {
         <PreLaunchPanel stage="vault-empty" />
       ) : null}
 
+      {/* BYOR gate. Mining is mandatory-RPC: shared Helius can't absorb
+       * many concurrent miners on a free tier. Once a URL is saved this
+       * collapses to a compact "Using your RPC" pill. */}
+      {config?.miningOpen && (
+        <RpcGate onChange={(url) => setHasRpc(!!url)} />
+      )}
+
       {/* Insufficient SOL warning */}
       {solBalance !== null && solBalance < 0.01 && config?.miningOpen && (
         <FundingPanel pubkey={pubkey?.toBase58() ?? ""} />
@@ -242,7 +255,20 @@ export function MineDashboard() {
         {!running ? (
           <button
             onClick={start}
-            disabled={!config?.miningOpen || (solBalance !== null && solBalance < 0.01)}
+            disabled={
+              !config?.miningOpen ||
+              (solBalance !== null && solBalance < 0.01) ||
+              !hasRpc
+            }
+            title={
+              !config?.miningOpen
+                ? "Mining not open yet"
+                : solBalance !== null && solBalance < 0.01
+                  ? "Wallet needs SOL for fees"
+                  : !hasRpc
+                    ? "Add your own RPC above first"
+                    : ""
+            }
             className="group inline-flex items-center gap-2.5 px-7 py-4 rounded-full bg-[var(--color-rose)] text-[var(--color-bg)] text-[16px] font-bold hover:bg-[var(--color-rose-bright)] transition-all glow-rose hover:scale-[1.01] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-[var(--color-rose)] disabled:hover:scale-100"
           >
             <PlayIcon />
