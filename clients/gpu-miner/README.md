@@ -13,42 +13,50 @@ Cross-platform via `wgpu`:
 | Windows | DX12 or Vulkan | should work |
 | Web | WebGPU | planned, same shader |
 
-## Status: v0 — leaf generation only
+## Status: v0.1 — hybrid GPU/CPU miner
 
 What's here today:
 
-- `equium-gpu-miner verify` — runs BLAKE2b leaf generation on GPU and
-  CPU side-by-side for a fixed (input, nonce), asserts byte-for-byte
-  match. Run this first on any new machine; if it fails the shader
-  output is wrong for your driver and we want to know.
-- `equium-gpu-miner bench` — measures leaf throughput at full Equihash
-  96,5 width (131,072 leaves per BLAKE2b job).
+- `equium-gpu-miner verify-cpu` — validates shader logic against
+  blake2b_simd without needing a GPU. Run this first; it should
+  always pass.
+- `equium-gpu-miner verify` — runs BLAKE2b leaf generation on the
+  actual GPU and compares to CPU reference. Requires GPU hardware.
+- `equium-gpu-miner bench` — measures leaf throughput on your GPU.
+- `equium-gpu-miner mine` — **full mining loop**. GPU does BLAKE2b
+  leaf generation, CPU runs Wagner rounds, races across `--threads`
+  workers for below-target nonces, submits to chain.
 
 What's not here yet:
 
-- The actual mining loop. `equium-gpu-miner mine` prints a stub.
-  Plumbing the GPU leaves into the existing Wagner solver + the
-  race-for-below-target submit loop is straightforward — it's
-  basically what `cli-miner` does, with the leaf-generation step
-  swapped out — but I wanted byte-level shader correctness verified
-  before wiring the rest.
-- Wagner rounds on GPU. Out of scope for v0; that's a substantially
-  bigger compute-shader effort (sort, XOR-and-pair, ×5 rounds, ×
-  proper memory bandwidth strategy). The leaf-generation cost is the
-  biggest single chunk of CPU time, so even the hybrid v0.1 will be
-  meaningfully faster than pure-CPU.
+- Wagner rounds on GPU. Out of scope for v0.x — that's a bigger
+  compute-shader effort (sort, XOR-and-pair, ×5 rounds). Even
+  hybrid v0.1 is meaningfully faster than pure-CPU because BLAKE2b
+  is ~70% of the per-attempt work.
+
+## Mine
+
+```bash
+cargo build --release -p equium-gpu-miner
+
+./target/release/equium-gpu-miner mine \
+  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \
+  --keypair ~/.config/solana/id.json
+```
+
+The mining loop spawns `--threads N` CPU workers (default = num_cpus).
+Each worker grinds random nonces, dispatches a leaf-generation kernel
+to the shared GPU, runs Wagner rounds on its own CPU thread, and
+races to find a below-target solution. First worker wins the round;
+the others abort and the next round starts.
 
 ## Roadmap
 
-- **v0** (this commit): GPU BLAKE2b leaf generation + byte-level CPU
-  verification.
-- **v0.1**: Wire GPU leaves into the existing `equihash-core::solver`
-  Wagner driver. Multi-threaded outer race for nonce selection +
-  submit; race-for-below-target identical to CLI miner.
-- **v0.2**: First Wagner round on GPU (sort + XOR + pair). Iterate
-  on memory layout; this is where the shader interesting parts live.
-- **v0.3**: All 5 Wagner rounds on GPU. End-to-end miner that hands
-  back a finished `Solution` to the host.
+- **v0** ✓ GPU BLAKE2b leaf generation + CPU verification harness.
+- **v0.1** ✓ Hybrid mining loop (this version). GPU leaves → CPU
+  Wagner → race-for-below-target → submit.
+- **v0.2**: First Wagner round on GPU (sort + XOR-and-pair).
+- **v0.3**: All 5 Wagner rounds on GPU.
 - **v0.4**: WebGPU integration into the browser miner.
 
 ## Build

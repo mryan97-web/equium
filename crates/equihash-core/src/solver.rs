@@ -189,6 +189,74 @@ impl BaseState {
     }
 }
 
+/// How many leaves Wagner expects for given (n, k). The caller must
+/// supply at least `n_init_leaves(n, k) * (n/8)` bytes when using
+/// `try_nonce_with_leaves`.
+pub fn n_init_leaves(n: u32, k: u32) -> usize {
+    1usize << (cbits_of(n, k) + 1)
+}
+
+/// Per-leaf byte size for given `n`. 12 for (96, 5).
+pub fn leaf_bytes(n: u32) -> usize {
+    (n as usize) / 8
+}
+
+/// Run Wagner against a buffer of pre-generated leaves. Used by the
+/// GPU miner — leaves are computed on-GPU, then handed in here for the
+/// CPU-side bucket/XOR/pair rounds. The leaves layout must be tightly
+/// packed: `n_init * leaf_bytes` bytes, leaf `i` at offset `i * leaf_bytes`.
+///
+/// Returns the compressed solution indices if this nonce produces a
+/// valid Equihash solution, `None` otherwise. `nonce` + `input` are
+/// passed only for the final `is_valid_solution` re-check — the leaves
+/// must already encode them.
+pub fn try_nonce_with_leaves(
+    n: u32,
+    k: u32,
+    input: &[u8; I_LEN],
+    nonce: &[u8; 32],
+    leaves: &[u8],
+) -> Option<Vec<u8>> {
+    if n == 0 || k == 0 || n % 8 != 0 || n % (k + 1) != 0 || k >= n {
+        return None;
+    }
+    let cbits = cbits_of(n, k);
+    let n_init: u32 = 1u32 << (cbits + 1);
+    let lb = leaf_bytes(n);
+    if leaves.len() < (n_init as usize) * lb {
+        return None;
+    }
+
+    let mut rows: Vec<Row> = (0..n_init)
+        .map(|i| Row {
+            hash: leaves[(i as usize) * lb..((i as usize) + 1) * lb].to_vec(),
+            indices: vec![i],
+        })
+        .collect();
+
+    for _ in 0..k {
+        rows = round(rows, cbits);
+        if rows.is_empty() {
+            return None;
+        }
+    }
+
+    let target_indices_len = 1usize << k;
+    for row in rows {
+        if row.indices.len() != target_indices_len {
+            continue;
+        }
+        if !row.hash.iter().all(|&b| b == 0) {
+            continue;
+        }
+        let compressed = compress_indices(n, k, &row.indices);
+        if equihash::is_valid_solution(n, k, input, nonce, &compressed).is_ok() {
+            return Some(compressed);
+        }
+    }
+    None
+}
+
 /// Try a single nonce against a pre-built `BaseState`. Returns the solution
 /// indices if this nonce yields a valid Equihash solution, `None` otherwise.
 ///
