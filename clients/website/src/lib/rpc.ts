@@ -76,8 +76,16 @@ const hex = (bytes: number[] | Uint8Array): string =>
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 
+// TTLs are intentionally longer than the cron interval (60s, see
+// vercel.json) so the cache always outlives one refresh cycle. If
+// cron runs late or skips, users still hit a warm cache; if cron
+// fires on time, it just overwrites a still-fresh value. The
+// trade-off is data freshness: state can be up to ~90s stale, which
+// is fine for an explorer (block height moves every ~1min anyway).
+const CACHE_TTL_SEC = 90;
+
 export async function fetchState(): Promise<EquiumState | null> {
-  return cached("equium:state:v1", 10, fetchStateUncached);
+  return cached("equium:state:v1", CACHE_TTL_SEC, fetchStateUncached);
 }
 
 export async function fetchStateUncached(): Promise<EquiumState | null> {
@@ -123,7 +131,7 @@ export interface MinedBlock {
  * Returns up to `limit` mined blocks ordered newest-first.
  */
 export async function fetchRecentBlocks(limit = 12): Promise<MinedBlock[]> {
-  return cached(`equium:blocks:${limit}:v1`, 20, () =>
+  return cached(`equium:blocks:${limit}:v1`, CACHE_TTL_SEC, () =>
     fetchRecentBlocksUncached(limit)
   );
 }
@@ -188,7 +196,7 @@ export async function fetchLeaderboard(
   scan = 200,
   take = 20
 ): Promise<LeaderboardEntry[]> {
-  return cached(`equium:leaderboard:${scan}:${take}:v1`, 60, () =>
+  return cached(`equium:leaderboard:${scan}:${take}:v1`, CACHE_TTL_SEC, () =>
     fetchLeaderboardUncached(scan, take)
   );
 }
@@ -319,7 +327,7 @@ export async function fetchHashrateSeries(
   scan = 200,
   bucketCount = 30
 ): Promise<HashrateSeries> {
-  return cached(`equium:hashrate:${scan}:${bucketCount}:v1`, 30, () =>
+  return cached(`equium:hashrate:${scan}:${bucketCount}:v1`, CACHE_TTL_SEC, () =>
     fetchHashrateSeriesUncached(scan, bucketCount)
   );
 }

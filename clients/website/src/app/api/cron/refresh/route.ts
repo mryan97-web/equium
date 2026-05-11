@@ -30,14 +30,20 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // TTLs match `cached()` in lib/rpc.ts. They're intentionally longer
+  // than the cron interval (60s, see vercel.json) so the cache always
+  // outlives one refresh cycle — even if cron misses or runs late, the
+  // next user request still hits a warm Redis entry instead of paying
+  // a multi-second Helius round trip.
+  const TTL = 90;
   const t0 = Date.now();
   const results = await Promise.allSettled([
-    warm("equium:state:v1", 10, fetchStateUncached),
-    warm("equium:blocks:12:v1", 20, () => fetchRecentBlocksUncached(12)),
-    warm("equium:leaderboard:200:20:v1", 60, () =>
+    warm("equium:state:v1", TTL, fetchStateUncached),
+    warm("equium:blocks:12:v1", TTL, () => fetchRecentBlocksUncached(12)),
+    warm("equium:leaderboard:200:20:v1", TTL, () =>
       fetchLeaderboardUncached(200, 20)
     ),
-    warm("equium:hashrate:200:30:v1", 30, () =>
+    warm("equium:hashrate:200:30:v1", TTL, () =>
       fetchHashrateSeriesUncached(200, 30)
     ),
   ]);
