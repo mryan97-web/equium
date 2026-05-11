@@ -8,6 +8,7 @@ import type {
   HashrateSeries,
 } from "@/lib/rpc";
 import { HashrateChart } from "./HashrateChart";
+import { PreLaunchPanel } from "./PreLaunchPanel";
 
 interface Props {
   initialState: EquiumState | null;
@@ -56,14 +57,28 @@ export function ExplorerDashboard({
   }, []);
 
   if (!state) {
+    // fetchState returns null when the config PDA doesn't exist OR the RPC
+    // is down. The most common cause pre-launch is the former, so frame
+    // accordingly. After initialize, state will populate and this branch
+    // becomes effectively unreachable.
     return (
-      <div className="text-center py-32">
-        <p className="text-[var(--color-fg-dim)]">
-          Couldn't reach the network. Try again in a few seconds.
-        </p>
+      <div className="space-y-6">
+        <div>
+          <div className="text-[11px] font-mono uppercase tracking-[0.2em] text-[var(--color-rose)] mb-2 font-semibold">
+            Explorer
+          </div>
+          <h1 className="text-[36px] md:text-[48px] font-black tracking-[-0.025em] leading-[1.05]">
+            Pre-launch
+          </h1>
+        </div>
+        <PreLaunchPanel stage="not-initialized" />
       </div>
     );
   }
+
+  // Config exists but mining hasn't been opened yet (initialize ran, fund_vault
+  // hasn't). Show the explorer skeleton with a tasteful banner above it.
+  const showVaultEmptyBanner = !state.miningOpen;
 
   const MINEABLE = 18_900_000 * 1_000_000;
   const minedPct = (state.cumulativeMined / MINEABLE) * 100;
@@ -89,6 +104,8 @@ export function ExplorerDashboard({
           Updated {formatRelative(lastUpdated)}
         </div>
       </div>
+
+      {showVaultEmptyBanner && <PreLaunchPanel stage="vault-empty" />}
 
       {/* Top stat grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

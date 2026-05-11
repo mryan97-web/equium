@@ -14,6 +14,7 @@ import { detectTokenProgram, fetchConfig, getProgramAnchorlike, type EquiumConfi
 import { startMiner, type MinerHandle } from "@/lib/miner-engine";
 import { RPC_URL } from "@/lib/rpc";
 import { ShareCardModal } from "./ShareCardModal";
+import { PreLaunchPanel } from "./PreLaunchPanel";
 import { WalletMenu } from "./wallet/WalletMenu";
 import { SendModal } from "./wallet/SendModal";
 
@@ -209,8 +210,17 @@ export function MineDashboard() {
         eqmBalance={eqmBalance}
       />
 
+      {/* Pre-launch states. `config === null` means the config PDA doesn't
+       * exist yet (initialize not called). `miningOpen === false` means the
+       * vault hasn't been funded yet. Both replace/precede the mining UI. */}
+      {config === null ? (
+        <PreLaunchPanel stage="not-initialized" />
+      ) : !config.miningOpen ? (
+        <PreLaunchPanel stage="vault-empty" />
+      ) : null}
+
       {/* Insufficient SOL warning */}
-      {solBalance !== null && solBalance < 0.01 && (
+      {solBalance !== null && solBalance < 0.01 && config?.miningOpen && (
         <FundingPanel pubkey={pubkey?.toBase58() ?? ""} />
       )}
 
