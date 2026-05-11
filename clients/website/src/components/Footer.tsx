@@ -44,8 +44,8 @@ export function Footer() {
             items={[
               { label: "GitHub", href: "https://github.com/HannaPrints/equium" },
               {
-                label: "CLI miner",
-                href: "https://github.com/HannaPrints/equium#run-the-cli-miner",
+                label: "GPU miner",
+                href: "https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner",
               },
               {
                 label: "Contributing",

@@ -194,14 +194,24 @@ export default function Page() {
         >
           github.com/HannaPrints/equium
         </a>
-        . The CLI reference miner is the shortest path to a headless setup:
+        . The GPU miner is the recommended setup — cross-platform via{" "}
+        <Code>wgpu</Code> (Metal / Vulkan / DX12), no CUDA or driver
+        install needed:
       </P>
       <Pre>{`git clone https://github.com/HannaPrints/equium
-cd equium/clients/cli-miner
-cargo build --release
-./target/release/equium-miner \\
+cd equium
+cargo build --release -p equium-gpu-miner
+
+./target/release/equium-gpu-miner verify   # one-time driver check
+./target/release/equium-gpu-miner mine \\
   --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
   --keypair ~/.config/solana/id.json`}</Pre>
+      <P>
+        No GPU? Swap <Code>equium-gpu-miner</Code> for{" "}
+        <Code>equium-cli-miner</Code> and the same flags work — the
+        CPU miner stays competitive because Equihash 96,5 is
+        memory-bound rather than compute-bound.
+      </P>
     </DocsLayout>
   );
 }

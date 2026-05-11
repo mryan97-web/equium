@@ -3,9 +3,9 @@ import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 
 export const metadata = {
-  title: "Mine Equium · CLI install guide",
+  title: "Mine Equium with your GPU · install guide",
   description:
-    "Set up the Equium CLI miner on macOS, Linux, or Windows (via WSL). Build from source in 5 minutes, point it at an RPC, mine $EQM.",
+    "Mine $EQM with the open-source GPU miner. Cross-platform via wgpu — Metal, Vulkan, DX12. Build from source in 5 minutes on macOS, Linux, or Windows. CPU fallback included.",
 };
 
 export default function DownloadPage() {
@@ -18,14 +18,23 @@ export default function DownloadPage() {
             Mine Equium
           </div>
           <h1 className="text-[40px] md:text-[52px] font-black tracking-[-0.025em] leading-[1.05] mb-5">
-            Install the CLI miner.
+            Mine $EQM with your GPU.
           </h1>
           <p className="text-[17px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-4">
-            The CLI miner is the reference implementation: a single Rust
-            binary, no Electron, no installer popups, runs headlessly on
-            anything that can build the source. It's currently the most
-            performant + most reliable way to mine $EQM, and it's what
-            we recommend for serious miners.
+            The GPU miner is the fastest path to earning EQM. Single
+            Rust binary, no Electron, no installer popups, no CUDA, no
+            proprietary driver — cross-platform via{" "}
+            <Code>wgpu</Code> (Metal on macOS, Vulkan on Linux/Windows,
+            DX12 on Windows). Any modern GPU works.
+          </p>
+          <p className="text-[15px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-4">
+            No GPU? The{" "}
+            <a href="#cpu" className="text-[var(--color-rose)] hover:underline">
+              CPU fallback
+            </a>{" "}
+            still earns blocks — Equihash 96,5 is memory-bound, so GPU
+            advantage over a multi-core CPU is bounded at 5–10×, not
+            the 1000× you'd see with SHA-based PoW.
           </p>
           <p className="text-[15px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-10">
             Just want to try mining without installing anything? Use the{" "}
@@ -34,32 +43,27 @@ export default function DownloadPage() {
               className="text-[var(--color-rose)] font-semibold hover:underline"
             >
               browser miner
-            </Link>{" "}
-            instead. Same protocol, slower because of WASM overhead, but
-            zero setup.
+            </Link>
+            . Same protocol, slower because of WASM overhead, but zero
+            setup.
           </p>
 
-          {/* OS picker */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-10">
+          {/* OS picker — each section installs the GPU miner */}
+          <div className="grid grid-cols-3 gap-3 mb-10">
             <OsCard
               label="macOS"
-              hint="Apple Silicon or Intel"
+              hint="Metal · Apple Silicon or Intel"
               href="#macos"
             />
             <OsCard
               label="Linux"
-              hint="Ubuntu, Debian, Arch, Fedora"
+              hint="Vulkan · NVIDIA, AMD, Intel"
               href="#linux"
             />
             <OsCard
               label="Windows"
-              hint="via WSL2 (recommended)"
+              hint="DX12 or Vulkan via WSL2"
               href="#windows"
-            />
-            <OsCard
-              label="GPU"
-              hint="hybrid wgpu miner · new"
-              href="#gpu"
             />
           </div>
 
@@ -110,15 +114,26 @@ export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"`}</Pre>
               <Pre>{`solana-keygen new -o ~/.config/solana/id.json --no-bip39-passphrase
 solana-keygen pubkey ~/.config/solana/id.json   # send a bit of SOL here`}</Pre>
             </Block>
-            <Block label="4 · Build + run the miner">
+            <Block label="4 · Build + run the GPU miner">
               <Pre>{`git clone https://github.com/HannaPrints/equium.git
 cd equium
-cargo build --release -p equium-cli-miner
+cargo build --release -p equium-gpu-miner
 
-./target/release/equium-miner \\
+# Quick sanity check — confirms the shader compiles for your driver.
+./target/release/equium-gpu-miner verify
+
+./target/release/equium-gpu-miner mine \\
   --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
-  --keypair ~/.config/solana/id.json \\
-  --threads $(sysctl -n hw.physicalcpu)`}</Pre>
+  --keypair ~/.config/solana/id.json`}</Pre>
+              <P>
+                Apple Silicon talks to the GPU over Metal; everything
+                stays on-device, no driver install. Once it's mining,
+                see{" "}
+                <a href="#advanced" className="text-[var(--color-rose)] hover:underline">
+                  Tune your GPU miner
+                </a>{" "}
+                for benchmarks and the v0.2 full-GPU mode.
+              </P>
             </Block>
           </Section>
 
@@ -150,15 +165,35 @@ export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"`}</Pre>
               <Pre>{`solana-keygen new -o ~/.config/solana/id.json --no-bip39-passphrase
 solana-keygen pubkey ~/.config/solana/id.json`}</Pre>
             </Block>
-            <Block label="5 · Build + run">
-              <Pre>{`git clone https://github.com/HannaPrints/equium.git
-cd equium
-cargo build --release -p equium-cli-miner
+            <Block label="5 · Build + run the GPU miner">
+              <Pre>{`# Vulkan dev headers — needed for wgpu to find your driver.
+# Debian / Ubuntu
+sudo apt install -y libvulkan-dev vulkan-tools
+# Arch
+sudo pacman -S vulkan-headers vulkan-tools
+# Fedora
+sudo dnf install -y vulkan-headers vulkan-tools
 
-./target/release/equium-miner \\
+git clone https://github.com/HannaPrints/equium.git
+cd equium
+cargo build --release -p equium-gpu-miner
+
+# Sanity check — confirms the shader compiles for your driver.
+./target/release/equium-gpu-miner verify
+
+./target/release/equium-gpu-miner mine \\
   --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
-  --keypair ~/.config/solana/id.json \\
-  --threads $(nproc)`}</Pre>
+  --keypair ~/.config/solana/id.json`}</Pre>
+              <P>
+                Works on NVIDIA, AMD, and Intel GPUs that support
+                Vulkan 1.1+. If <Code>vulkaninfo</Code> lists your
+                adapter, the miner will pick it up. Once mining works,
+                see{" "}
+                <a href="#advanced" className="text-[var(--color-rose)] hover:underline">
+                  Tune your GPU miner
+                </a>
+                .
+              </P>
             </Block>
           </Section>
 
@@ -198,69 +233,60 @@ source "$HOME/.cargo/env"`}</Pre>
 export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"`}</Pre>
             </Block>
 
-            <Block label="5 · Generate a keypair + build">
+            <Block label="5 · Generate a keypair + build the GPU miner">
               <Pre>{`solana-keygen new -o ~/.config/solana/id.json --no-bip39-passphrase
 solana-keygen pubkey ~/.config/solana/id.json    # send SOL here
 
+# WSL2 exposes your Windows GPU via Vulkan (NVIDIA + AMD have full
+# support; Intel works on recent drivers). Install Vulkan dev headers:
+sudo apt install -y libvulkan-dev vulkan-tools
+
 git clone https://github.com/HannaPrints/equium.git
 cd equium
-cargo build --release -p equium-cli-miner
+cargo build --release -p equium-gpu-miner
 
-./target/release/equium-miner \\
+# Sanity check — confirms the shader compiles for your driver.
+./target/release/equium-gpu-miner verify
+
+./target/release/equium-gpu-miner mine \\
   --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
-  --keypair ~/.config/solana/id.json \\
-  --threads $(nproc)`}</Pre>
+  --keypair ~/.config/solana/id.json`}</Pre>
             </Block>
 
             <Callout tone="dim">
-              <strong>Determined to mine on native Windows?</strong> You'll
-              need rustup-init.exe, the Solana Windows installer, and a
-              C++ build toolchain (Build Tools for Visual Studio with the
-              C++ workload). After that the cargo command is the same.
-              File a GitHub issue if something specific breaks and we'll
-              document a workaround.
+              <strong>Native Windows build?</strong> Run the same{" "}
+              <Code>cargo build</Code> from PowerShell after installing
+              rustup-init.exe, Build Tools for Visual Studio (C++
+              workload), and the Solana Windows installer. wgpu picks
+              up DX12 automatically. File a GitHub issue if something
+              specific breaks and we'll document a workaround.
             </Callout>
           </Section>
 
-          {/* GPU miner */}
-          <Section id="gpu" title="Got a GPU? Use it.">
-            <Callout>
-              <strong>New: hybrid GPU/CPU miner (v0.1).</strong> Builds on
-              the same Rust toolchain you set up above. GPU runs the
-              BLAKE2b leaf-generation pass (~70% of solver time), CPU
-              still handles the Wagner rounds. Pure-CPU miners are
-              welcome and still earn EQM, but a modest GPU is a real
-              speedup vs the multi-core CPU path.
-            </Callout>
-
+          {/* Tune your GPU miner */}
+          <Section id="advanced" title="Tune your GPU miner">
             <P>
-              Cross-platform via <Code>wgpu</Code> — Metal on macOS,
-              Vulkan on Linux/Windows, DX12 on Windows. No CUDA, no
-              proprietary driver, no admin install.
+              Once <Code>mine</Code> is running, the commands below let
+              you verify the shader on your specific driver, benchmark
+              throughput, and opt into the v0.2 all-on-GPU pipeline.
             </P>
 
-            <Block label="1 · Build">
-              <Pre>{`# (Rust + Solana CLI + keypair already set up from the section above)
-cd equium
-cargo build --release -p equium-gpu-miner`}</Pre>
-            </Block>
-
-            <Block label="2 · Verify the shader is correct for your driver">
-              <Pre>{`# Always passes — pure Rust port checked against blake2b_simd
+            <Block label="Verify the shader is correct for your driver">
+              <Pre>{`# Pure-Rust port checked against blake2b_simd — always passes,
+# catches WGSL logic bugs without needing a GPU.
 ./target/release/equium-gpu-miner verify-cpu
 
-# Real GPU test — runs the WGSL shader on your hardware, compares
-# byte-for-byte to the CPU reference. Should print:
-#   ✓ GPU output matches CPU reference byte-for-byte.
+# Real on-device test — runs the WGSL shader on your hardware,
+# compares byte-for-byte to the CPU reference.
 ./target/release/equium-gpu-miner verify`}</Pre>
               <P>
-                If <Code>verify</Code> mismatches, please open a GitHub
-                issue with the first-mismatch hex output and your GPU /
-                OS — we want to know about every driver case.
+                If <Code>verify</Code> mismatches, open a GitHub issue
+                with the first-mismatch hex output and your GPU / OS —
+                we want to know about every driver case.
               </P>
             </Block>
 
-            <Block label="3 · Benchmark (optional)">
+            <Block label="Benchmark throughput">
               <Pre>{`./target/release/equium-gpu-miner bench`}</Pre>
               <P>
                 Reports BLAKE2b throughput at full Equihash 96,5 width.
@@ -269,21 +295,32 @@ cargo build --release -p equium-gpu-miner`}</Pre>
               </P>
             </Block>
 
-            <Block label="4 · Mine">
-              <Pre>{`./target/release/equium-gpu-miner mine \\
+            <Block label="Full-GPU mode (v0.2, opt-in)">
+              <Pre>{`# Sanity-check first — runs the GPU Wagner pipeline alongside
+# the CPU reference on the same nonces and asserts they agree.
+./target/release/equium-gpu-miner verify-rounds --nonces 4
+
+# Then mine with everything on GPU.
+./target/release/equium-gpu-miner mine --full-gpu \\
   --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
   --keypair ~/.config/solana/id.json`}</Pre>
               <P>
-                Same flags as the CPU miner. The GPU shared across all
-                CPU worker threads handles leaf generation; each CPU
-                thread runs its own Wagner pass and races for a
-                below-target nonce.
+                v0.2 moves the full Wagner solver onto the GPU — all
+                five rounds plus solution scan run on-device, with
+                only tx submission left on CPU. The algorithm is
+                byte-for-byte validated against the CPU solver at all
+                5 rounds (see <Code>cargo test</Code> in{" "}
+                <Code>clients/gpu-miner</Code>); the on-device
+                verification step above checks your specific
+                driver/adapter before you commit.
               </P>
             </Block>
 
             <Callout tone="dim">
-              v0.1 is hybrid GPU+CPU. v0.2 moves the first Wagner round
-              onto GPU; v0.3 moves all of them; v0.4 brings the same
+              v0.1 hybrid (GPU leaves + CPU Wagner) is the default and
+              battle-tested. v0.2 full-GPU is shipping for early
+              testers — run <Code>verify-rounds</Code> and report any
+              disagreement before relying on it. v0.3 brings the same
               shader to the browser miner via WebGPU.{" "}
               <a
                 href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
@@ -297,15 +334,37 @@ cargo build --release -p equium-gpu-miner`}</Pre>
             </Callout>
           </Section>
 
+          {/* CPU fallback */}
+          <Section id="cpu" title="No GPU? CPU still earns blocks.">
+            <P>
+              Equihash 96,5 is memory-bound by design, so GPU advantage
+              over a multi-core CPU is bounded — typically 5–10×, not
+              the 100–1000× you'd see with SHA-based PoW. A pure-CPU
+              miner stays competitive enough to earn blocks; your
+              share just shrinks as more GPUs join the network and the
+              retargeter responds.
+            </P>
+            <Block label="Build + run the CPU miner">
+              <Pre>{`# Prereqs (Rust + Solana CLI + keypair) from the section above.
+cd equium
+cargo build --release -p equium-cli-miner
+
+./target/release/equium-miner \\
+  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
+  --keypair ~/.config/solana/id.json \\
+  --threads $(nproc 2>/dev/null || sysctl -n hw.physicalcpu)`}</Pre>
+            </Block>
+            <P>
+              One solver thread per physical core by default. Override
+              with <Code>--threads N</Code> if you want to leave some
+              cores free for other work. Each thread independently
+              grinds nonces; first to find a below-target solution
+              wins the round.
+            </P>
+          </Section>
+
           {/* Performance notes */}
           <Section id="perf" title="Performance notes">
-            <P>
-              The CPU miner spawns one solver thread per physical core
-              by default. Override with <Code>--threads N</Code> if you
-              want to leave some cores free for other work. Each thread
-              independently grinds nonces; first to find a below-target
-              solution wins the round.
-            </P>
             <P>
               The auto-retargeter brings difficulty up as more miners join
               the network. Expect your hashrate, in absolute terms, to look
@@ -313,12 +372,14 @@ cargo build --release -p equium-gpu-miner`}</Pre>
               working as designed.
             </P>
             <P>
-              <strong>CPU vs GPU.</strong> Equihash 96,5 is memory-hard
-              by design, so GPU advantage is bounded relative to
-              SHA-based proof-of-work — typically 5-10x over a
-              multi-core CPU, not 1000x. The hybrid GPU miner in the
-              section above ships today; pure-GPU Wagner is on the
-              roadmap. Pure-CPU still earns blocks.
+              <strong>Why GPU first.</strong> The v0.1 hybrid miner
+              moves BLAKE2b leaf generation (~70% of solver time) onto
+              the GPU; v0.2 moves the rest of Wagner. On a modest GPU
+              that's a real speedup over CPU-only, even with
+              Equihash's memory-bound design capping the advantage.
+              Both miners use the same Rust core and the same wgpu
+              backend abstractions — no CUDA, no driver install, no
+              admin rights.
             </P>
           </Section>
 

@@ -26,19 +26,18 @@ export function MinePlaceholder() {
         </p>
 
         <p className="mt-6 text-[15px] leading-[1.6] text-[var(--color-fg-dim)] max-w-xl mx-auto">
-          In the meantime, the CLI miner is fully working. Clone the repo,
-          build it, point it at mainnet, and mine real $EQM.
+          In the meantime, the GPU miner is fully working — cross-platform
+          via wgpu, no CUDA install, no admin rights. Build it, point it at
+          mainnet, mine real $EQM.
         </p>
 
         <div className="mt-9 flex flex-col sm:flex-row gap-3 justify-center">
-          <a
-            href="https://github.com/HannaPrints/equium#run-the-cli-miner"
-            target="_blank"
-            rel="noreferrer"
+          <Link
+            href="/download"
             className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-[var(--color-rose)] text-[var(--color-bg)] text-[15px] font-bold hover:bg-[var(--color-rose-bright)] transition-all glow-rose-soft"
           >
-            CLI miner setup →
-          </a>
+            GPU miner setup →
+          </Link>
           <Link
             href="/explorer"
             className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full border border-[var(--color-border-bright)] text-[15px] font-medium text-[var(--color-fg-soft)] hover:bg-white/[0.03]"

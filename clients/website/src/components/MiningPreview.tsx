@@ -9,30 +9,28 @@ export function MiningPreview() {
           <div>
             <SectionHeader
               kicker="Mine it"
-              title="Your machine is the rig."
-              sub="Equihash 96,5 uses roughly 50 MB of memory per thread and runs on any modern CPU. Solutions take a few seconds to find, and block rewards are delivered directly to your wallet."
+              title="Your GPU is the rig."
+              sub="The reference GPU miner is open source and cross-platform via wgpu — Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows. No CUDA, no driver install. A modest GPU outpaces a multi-core CPU by 5–10×; pure-CPU mining still earns blocks."
             />
             <div className="mt-9 flex flex-col sm:flex-row gap-3">
               <Link
-                href="/mine"
+                href="/download"
                 className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-full bg-[var(--color-rose)] text-[var(--color-bg)] text-[15px] font-bold hover:bg-[var(--color-rose-bright)] transition-all glow-rose-soft"
               >
-                Mine in your browser →
+                GPU miner setup →
               </Link>
-              <a
-                href="https://github.com/HannaPrints/equium#run-the-cli-miner"
-                target="_blank"
-                rel="noreferrer"
+              <Link
+                href="/mine"
                 className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-full border border-[var(--color-border-bright)] text-[15px] font-medium text-[var(--color-fg-soft)] hover:bg-white/[0.03]"
               >
-                CLI miner
-              </a>
+                Try in browser
+              </Link>
             </div>
 
             <div className="mt-10 grid grid-cols-2 gap-3">
-              <MiniStat label="RAM per thread" value="~50 MB" />
-              <MiniStat label="Avg solve time" value="~400 ms" />
-              <MiniStat label="Mobile friendly" value="Yes" accent />
+              <MiniStat label="GPU backend" value="Metal · Vulkan · DX12" />
+              <MiniStat label="Avg solve time" value="~80 ms" />
+              <MiniStat label="Memory-bound" value="Yes" accent />
               <MiniStat label="ASIC resistant" value="Yes" accent />
             </div>
           </div>
@@ -48,7 +46,7 @@ export function MiningPreview() {
                 <span className="w-3 h-3 rounded-full bg-[#febc2e]" />
                 <span className="w-3 h-3 rounded-full bg-[#28c840]" />
                 <span className="ml-3 text-[11px] font-mono text-[var(--color-fg-dim)]">
-                  equium-miner
+                  equium-gpu-miner
                 </span>
                 <span className="ml-auto text-[10px] font-mono uppercase tracking-[0.15em] flex items-center gap-1.5 text-[var(--color-mint)]">
                   <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-mint)] live-dot" />
@@ -56,16 +54,16 @@ export function MiningPreview() {
                 </span>
               </div>
               <div className="text-[12px] leading-[1.7] font-mono p-5 overflow-hidden">
-                <TermLog>equium-miner online</TermLog>
+                <TermLog>equium-gpu-miner online</TermLog>
+                <TermLog>{"  GPU      "}<Teal>Apple M2 Pro (Metal)</Teal></TermLog>
                 <TermLog>{"  miner    "}<Teal>AgbS…AEQM</Teal></TermLog>
                 <TermLog>{"  program  "}<Teal>ZKGM…uEQM</Teal></TermLog>
-                <TermLog>{"  rpc      "}<Dim>https://api.mainnet-beta.solana.com</Dim></TermLog>
                 <div className="h-3" />
                 <TermLog><Bold>round #18</Bold>{"   reward 25 EQM   target 0x40ffff…"}</TermLog>
-                <TermLog>{"  · try #1   "}<Dim>above target</Dim>{"   421ms   "}<Gold>1.2 H/s</Gold></TermLog>
-                <TermLog>{"  · try #2   "}<Dim>above target</Dim>{"   400ms   "}<Gold>1.5 H/s</Gold></TermLog>
-                <TermLog>{"  · try #3   "}<Dim>above target</Dim>{"   479ms   "}<Gold>1.6 H/s</Gold></TermLog>
-                <TermLog>{"  "}<Sage>✓ MINED!</Sage>{"   "}<Bold>+25 EQM</Bold>{"   try #4   "}<Gold>1.6 H/s</Gold></TermLog>
+                <TermLog>{"  · try #1   "}<Dim>above target</Dim>{"   84ms    "}<Gold>11.9 H/s</Gold></TermLog>
+                <TermLog>{"  · try #2   "}<Dim>above target</Dim>{"   78ms    "}<Gold>12.8 H/s</Gold></TermLog>
+                <TermLog>{"  · try #3   "}<Dim>above target</Dim>{"   81ms    "}<Gold>12.3 H/s</Gold></TermLog>
+                <TermLog>{"  "}<Sage>✓ MINED!</Sage>{"   "}<Bold>+25 EQM</Bold>{"   try #4   "}<Gold>12.4 H/s</Gold></TermLog>
                 <TermLog>{"    "}<Dim>sig YrgmXW…AvNCGY</Dim></TermLog>
                 <div className="h-3" />
                 <TermLog><Dim>total mined</Dim>{"  "}<Bold>25 EQM</Bold>{"  ·  "}<Dim>blocks</Dim>{"  "}<Bold>1</Bold>{"  ·  "}<Dim>uptime</Dim>{"  "}<Bold>0:08</Bold></TermLog>
