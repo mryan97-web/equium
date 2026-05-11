@@ -41,16 +41,19 @@ const ALLOWED_METHODS = new Set<string>([
   "simulateTransaction",
 ]);
 
-// Rate limiter: simple sliding-window counter per IP. Production should use
-// Redis/Upstash; this in-memory map is fine for a single Vercel instance.
+// Rate limiter: simple sliding-window counter per IP. Production should
+// use Redis/Upstash; this in-memory map is fine for a single Vercel
+// instance. The numbers are sized for a single active miner — the browser
+// pool with 8 workers + dashboard polling + tx submits + web3.js's own
+// 429-backoff retries can comfortably hit ~10 req/sec during a mining
+// session, so 1200/min gives a healthy buffer before we cut someone off.
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_REQS = 120; // per IP per minute
+const RATE_MAX_REQS = 1200;
 const ipBuckets = new Map<string, number[]>();
 
 function rateLimit(ip: string): boolean {
   const now = Date.now();
   const arr = ipBuckets.get(ip) || [];
-  // Drop entries older than the window
   const fresh = arr.filter((t) => now - t < RATE_WINDOW_MS);
   if (fresh.length >= RATE_MAX_REQS) {
     ipBuckets.set(ip, fresh);
@@ -59,6 +62,21 @@ function rateLimit(ip: string): boolean {
   fresh.push(now);
   ipBuckets.set(ip, fresh);
   return true;
+}
+
+// Tiny server-side cache for getAccountInfo. The config PDA changes only
+// on block mines (every ~1 min); polling it dozens of times per second
+// across all connected miners is wasted upstream traffic. A 2-second TTL
+// soaks up the burst without anyone noticing.
+const CACHE_TTL_MS = 2000;
+const accountCache = new Map<string, { ts: number; body: string }>();
+const CACHEABLE_METHODS = new Set(["getAccountInfo", "getMultipleAccounts"]);
+
+function cacheKey(req: any): string | null {
+  if (!CACHEABLE_METHODS.has(req?.method)) return null;
+  // Key off method + params so different account addresses/commitments
+  // don't collide. JSON.stringify is fine here — params are small.
+  return `${req.method}:${JSON.stringify(req.params ?? [])}`;
 }
 
 function getClientIp(req: NextRequest): string {
@@ -100,6 +118,24 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Single-request cache shortcut. Batched requests skip the cache (rare in
+  // practice; web3.js sends one method per call).
+  if (!Array.isArray(body)) {
+    const key = cacheKey(body);
+    if (key) {
+      const hit = accountCache.get(key);
+      if (hit && Date.now() - hit.ts < CACHE_TTL_MS) {
+        return new NextResponse(hit.body, {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "x-cache": "HIT",
+          },
+        });
+      }
+    }
+  }
+
   try {
     const upstream = await fetch(UPSTREAM_URL, {
       method: "POST",
@@ -112,6 +148,13 @@ export async function POST(req: NextRequest) {
     });
 
     const text = await upstream.text();
+
+    // Cache successful single-request reads.
+    if (!Array.isArray(body) && upstream.ok) {
+      const key = cacheKey(body);
+      if (key) accountCache.set(key, { ts: Date.now(), body: text });
+    }
+
     return new NextResponse(text, {
       status: upstream.status,
       headers: {
