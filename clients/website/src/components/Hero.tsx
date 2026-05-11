@@ -21,10 +21,12 @@ export function Hero() {
 
         {/* Sub */}
         <p className="mt-7 max-w-2xl mx-auto text-[17px] md:text-[19px] leading-[1.6] text-[var(--color-fg-dim)] text-balance fade-up" style={{ animationDelay: "120ms" }}>
-          Equium ($EQM) is a CPU-mineable token on Solana with{" "}
+          Equium ($EQM) is a fair-launch token on Solana with{" "}
           <span className="text-[var(--color-fg)]">a 21M hard cap and a halving schedule</span>.
-          The supply is produced through proof-of-work, not distributed by a team. There
-          was no presale and there is no insider allocation.
+          Supply is produced through Equihash proof-of-work — point a{" "}
+          <span className="text-[var(--color-fg)]">GPU</span> at it
+          and start mining. No presale, no insider allocation, no team
+          unlocks.
         </p>
 
         {/* CTAs */}

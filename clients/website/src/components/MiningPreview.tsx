@@ -10,7 +10,7 @@ export function MiningPreview() {
             <SectionHeader
               kicker="Mine it"
               title="Your GPU is the rig."
-              sub="The reference GPU miner is open source and cross-platform via wgpu — Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows. No CUDA, no driver install. A modest GPU outpaces a multi-core CPU by 5–10×; pure-CPU mining still earns blocks."
+              sub="The reference GPU miner is open source and cross-platform via wgpu — Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows. No CUDA, no driver install. Plug in any modern GPU and the same WGSL shaders run on it. CPU fallback ships too."
             />
             <div className="mt-9 flex flex-col sm:flex-row gap-3">
               <Link

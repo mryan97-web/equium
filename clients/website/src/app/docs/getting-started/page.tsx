@@ -208,9 +208,9 @@ cargo build --release -p equium-gpu-miner
   --keypair ~/.config/solana/id.json`}</Pre>
       <P>
         No GPU? Swap <Code>equium-gpu-miner</Code> for{" "}
-        <Code>equium-cli-miner</Code> and the same flags work — the
-        CPU miner stays competitive because Equihash 96,5 is
-        memory-bound rather than compute-bound.
+        <Code>equium-cli-miner</Code> and the same flags work — Equihash
+        96,5 is memory-bound rather than compute-bound, so commodity
+        CPUs still earn blocks.
       </P>
     </DocsLayout>
   );

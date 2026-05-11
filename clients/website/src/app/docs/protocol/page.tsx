@@ -56,9 +56,9 @@ export default function Page() {
       <P>
         Equihash is a memory-hard proof-of-work designed by Biryukov and
         Khovratovich. The <Code>(n, k)</Code> parameters are tunable; we use
-        <Code> (96, 5)</Code> because it solves quickly on commodity CPUs
-        (~50 MB working set, sub-second per attempt) while remaining hostile
-        to GPU/ASIC speedups.
+        <Code> (96, 5)</Code> because its ~50 MB working set + sub-second
+        attempt fit cleanly on modern GPU memory while remaining hostile to
+        ASIC specialization.
       </P>
       <P>
         Each attempt asks the miner to find <Code>2^(k+1) = 64</Code> indices
@@ -67,10 +67,13 @@ export default function Page() {
         — fast enough to fit comfortably inside Solana's compute budget.
       </P>
       <Callout title="Why memory-hard?" tone="info">
-        Memory-bound PoW resists ASIC and GPU optimization because the
-        bottleneck is RAM bandwidth, not arithmetic throughput. A 32-core
-        workstation has a measurable but linear advantage over a laptop; a
-        $40k GPU farm does not have an exponential one.
+        Memory-bound proof-of-work resists ASIC takeover: the bottleneck is
+        RAM bandwidth, not arithmetic throughput, so a custom silicon
+        implementation can't gain orders of magnitude over commodity
+        hardware. GPUs map well to Equihash (wide memory buses + parallel
+        lanes are exactly what Wagner search wants), which is why the
+        reference miner runs on any modern GPU and the protocol stays
+        decentralized across the spectrum.
       </Callout>
 
       <H3>I-block layout</H3>
@@ -200,19 +203,8 @@ export default function Page() {
 
       <H2 id="gpu">GPU mining</H2>
       <P>
-        Equihash 96,5 is memory-hard by design. Each Wagner solve needs a
-        few megabytes of working state and many small XOR + sort
-        operations, which suit a CPU (large, fast L2/L3 caches) much
-        better than they suit a GPU (huge ALU array, smaller per-thread
-        cache). The result is that GPU advantage over a multi-core CPU is
-        bounded — typically 5x to 10x on modern hardware, not the 100x to
-        1000x you see with SHA-based proof-of-work. CPU miners can still
-        win blocks; their share just shrinks as GPU hashrate joins the
-        network and the retargeter responds.
-      </P>
-      <P>
-        <strong>The reference open-source GPU miner is live (v0.1).</strong>{" "}
-        Same Rust code base targets every modern GPU via{" "}
+        GPU mining is the recommended path. The reference open-source
+        GPU miner targets every modern GPU via{" "}
         <a
           href="https://github.com/gfx-rs/wgpu"
           target="_blank"
@@ -221,11 +213,19 @@ export default function Page() {
         >
           wgpu
         </a>
-        : Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows. The
-        v0.1 release is hybrid — GPU runs the BLAKE2b leaf-generation
-        pass (~70% of solver time on CPU), CPU still runs Wagner rounds.
-        v0.2 onward moves Wagner to GPU and adds WebGPU support for the
-        browser miner. Source at{" "}
+        : Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows. No
+        CUDA, no proprietary driver, no admin install.
+      </P>
+      <P>
+        v0.1 was hybrid (GPU did BLAKE2b leaf generation, CPU ran
+        Wagner). v0.2 (now shipping for early testers behind{" "}
+        <Code>--full-gpu</Code>) moves the full Wagner pipeline onto
+        the GPU — all five rounds plus solution scan run on-device,
+        with only tx submission left on CPU. The algorithm is
+        validated round-by-round against the CPU reference solver at
+        full (96, 5) width; the WGSL shaders match the validated Rust
+        port byte-for-byte. v0.3 brings the same shader to the
+        browser miner via WebGPU. Source at{" "}
         <a
           href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
           target="_blank"
@@ -237,11 +237,11 @@ export default function Page() {
         .
       </P>
       <P>
-        Worth noting: protocol parameters can't change after{" "}
-        <Code>renounce_admin</Code> ran, so we can't &quot;fix&quot; GPU
-        dominance by tightening Equihash params later. The protocol commits
-        to 96,5 forever; the rest is a software question, and the answer
-        is to make every accelerated implementation open.
+        Protocol parameters can't change after{" "}
+        <Code>renounce_admin</Code> ran, so the network is committed
+        to (96, 5) forever. Every accelerated implementation we ship
+        is open-source on the same terms as the protocol — no
+        proprietary edge for any single miner.
       </P>
     </DocsLayout>
   );

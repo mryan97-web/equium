@@ -40,7 +40,7 @@ export default function DocsIndex() {
         lede="Reference material for miners, integrators, and anyone reading the source. The protocol is small and the docs follow that — start with Getting started if you just want to mine."
       />
       <P>
-        Equium is a CPU-mineable token on Solana with a fixed 21M supply and a
+        Equium is a GPU-mineable token on Solana with a fixed 21M supply and a
         Bitcoin-style halving schedule. The on-chain program is roughly 1,000
         lines of Rust and is open source under Apache-2.0. These pages cover
         what each part does and how to interact with it.

@@ -6,17 +6,17 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_SITE_URL || "https://equium.xyz"
   ),
   title: {
-    default: "Equium — CPU-mineable Solana token",
+    default: "Equium — GPU-mineable Solana token",
     template: "%s · Equium",
   },
   description:
-    "Bitcoin-style economics on Solana. 21M hard cap, halving forever, fair-launched via Equihash CPU mining. Mine $EQM in your browser — no install, no bridge, no custody.",
+    "Bitcoin-style economics on Solana. 21M hard cap, halving forever, fair-launched via Equihash proof-of-work. Mine $EQM with your GPU — open-source miner, no install drama, no presale.",
   applicationName: "Equium",
   keywords: [
     "Equium",
     "$EQM",
     "Solana",
-    "CPU mining",
+    "GPU mining",
     "Equihash",
     "Bitcoin",
     "fair launch",
@@ -30,9 +30,9 @@ export const metadata: Metadata = {
     apple: [{ url: "/logo.png", type: "image/png" }],
   },
   openGraph: {
-    title: "Equium — CPU-mineable Solana token",
+    title: "Equium — GPU-mineable Solana token",
     description:
-      "Bitcoin-style economics on Solana. Mine $EQM from any machine. No presale, no airdrop, no VC.",
+      "Bitcoin-style economics on Solana. Mine $EQM with your GPU. No presale, no airdrop, no VC.",
     url: "/",
     siteName: "Equium",
     type: "website",
@@ -42,7 +42,7 @@ export const metadata: Metadata = {
         url: "/opengraph-image",
         width: 1200,
         height: 630,
-        alt: "Equium — CPU-mineable Solana token",
+        alt: "Equium — GPU-mineable Solana token",
         type: "image/png",
       },
     ],
@@ -51,9 +51,9 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     site: "@EquiumEQM",
     creator: "@EquiumEQM",
-    title: "Equium — CPU-mineable Solana token",
+    title: "Equium — GPU-mineable Solana token",
     description:
-      "Bitcoin-style economics on Solana. Mine $EQM from any machine. No presale, no airdrop, no VC.",
+      "Bitcoin-style economics on Solana. Mine $EQM with your GPU. No presale, no airdrop, no VC.",
     images: ["/opengraph-image"],
   },
   robots: {

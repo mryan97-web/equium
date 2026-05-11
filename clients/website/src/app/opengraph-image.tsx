@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 // Regenerate every 60s so chain state (block height) stays current in
 // Twitter/Discord embeds without forcing a redeploy after each round.
 export const revalidate = 60;
-export const alt = "Equium — CPU-mineable Solana token";
+export const alt = "Equium — GPU-mineable Solana token";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 

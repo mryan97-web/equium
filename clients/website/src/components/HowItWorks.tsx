@@ -5,7 +5,7 @@ export function HowItWorks() {
         <SectionHeader
           kicker="How it works"
           title="Proof-of-work on Solana."
-          sub="Equihash 96,5 is memory-bound rather than compute-bound. A GPU's edge over a multi-core CPU is bounded — typically 5-10x, not the 1000x you see with SHA-based proof-of-work. Reference CPU and GPU miners are both open source."
+          sub="Mine $EQM with an Equihash 96,5 GPU miner — wgpu shaders run on Metal, Vulkan, or DX12, no CUDA, no driver install. The protocol is memory-bound, so it stays ASIC-resistant: anyone with a GPU mines on a level playing field with anyone else."
         />
 
         <div className="mt-16 grid md:grid-cols-3 gap-4">

@@ -159,9 +159,9 @@ export default function Page() {
       </P>
       <UL>
         <li>
-          PoW is Equihash 96,5 (memory-hard, CPU-friendly), not SHA-256
-          (compute-hard, ASIC-dominated). The goal is to keep mining
-          accessible to commodity hardware.
+          PoW is Equihash 96,5 (memory-hard), not SHA-256 (compute-hard,
+          ASIC-dominated). The goal is to keep mining on commodity GPUs
+          rather than custom silicon.
         </li>
         <li>
           Settlement is on Solana, so transaction fees are sub-cent rather

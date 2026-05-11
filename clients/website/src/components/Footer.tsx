@@ -25,7 +25,7 @@ export function Footer() {
               </div>
             </Link>
             <p className="mt-5 text-[14px] leading-[1.6] text-[var(--color-fg-dim)] max-w-sm">
-              CPU-mineable token on Solana. Bitcoin-style economics — 21M cap,
+              GPU-mineable token on Solana. Bitcoin-style economics — 21M cap,
               halvings, fair launch. Mine it, or trade what others mined.
             </p>
           </div>
@@ -73,7 +73,7 @@ export function Footer() {
           </p>
           <p className="text-[11px] text-[var(--color-fg-faint)]">
             Equium isn't an investment. It's a fair-launched experiment in
-            CPU-mineable money on a fast chain.
+            GPU-mineable money on a fast chain.
           </p>
         </div>
       </div>

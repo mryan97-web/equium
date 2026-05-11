@@ -32,9 +32,8 @@ export default function DownloadPage() {
             <a href="#cpu" className="text-[var(--color-rose)] hover:underline">
               CPU fallback
             </a>{" "}
-            still earns blocks — Equihash 96,5 is memory-bound, so GPU
-            advantage over a multi-core CPU is bounded at 5–10×, not
-            the 1000× you'd see with SHA-based PoW.
+            still earns blocks — Equihash is memory-bound so commodity
+            hardware stays competitive — but if you have a GPU, use it.
           </p>
           <p className="text-[15px] leading-[1.6] text-[var(--color-fg-dim)] max-w-2xl mb-10">
             Just want to try mining without installing anything? Use the{" "}
@@ -337,12 +336,12 @@ cargo build --release -p equium-gpu-miner
           {/* CPU fallback */}
           <Section id="cpu" title="No GPU? CPU still earns blocks.">
             <P>
-              Equihash 96,5 is memory-bound by design, so GPU advantage
-              over a multi-core CPU is bounded — typically 5–10×, not
-              the 100–1000× you'd see with SHA-based PoW. A pure-CPU
-              miner stays competitive enough to earn blocks; your
-              share just shrinks as more GPUs join the network and the
-              retargeter responds.
+              Equihash 96,5 is memory-bound, so the protocol stays
+              ASIC-resistant and commodity CPUs stay viable miners.
+              The auto-retargeter scales difficulty with total
+              hashrate, so a pure-CPU miner keeps winning a share of
+              blocks — your share just tracks your share of total
+              network hashrate, like any PoW chain.
             </P>
             <Block label="Build + run the CPU miner">
               <Pre>{`# Prereqs (Rust + Solana CLI + keypair) from the section above.
@@ -372,14 +371,15 @@ cargo build --release -p equium-cli-miner
               working as designed.
             </P>
             <P>
-              <strong>Why GPU first.</strong> The v0.1 hybrid miner
+              <strong>Why GPU first.</strong> v0.1 of the GPU miner
               moves BLAKE2b leaf generation (~70% of solver time) onto
-              the GPU; v0.2 moves the rest of Wagner. On a modest GPU
-              that's a real speedup over CPU-only, even with
-              Equihash's memory-bound design capping the advantage.
-              Both miners use the same Rust core and the same wgpu
-              backend abstractions — no CUDA, no driver install, no
-              admin rights.
+              the GPU; v0.2 moves the rest of Wagner. Both versions
+              share one Rust core and one set of WGSL shaders running
+              across Metal, Vulkan, and DX12 — no CUDA, no driver
+              install, no admin rights. The on-chain protocol is
+              committed to (96, 5) forever, so every accelerated
+              implementation we ship is open-source on the same terms
+              as the protocol itself.
             </P>
           </Section>
 

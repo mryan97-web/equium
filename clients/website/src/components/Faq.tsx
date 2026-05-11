@@ -9,8 +9,8 @@ const ITEMS = [
     a: "Maybe, maybe not. Equium is an experiment in fair-launch distribution rather than a yield product. The protocol issues 25 EQM per block to whoever submits the first valid solution, but the market value of those tokens is determined by demand on the open market and is not guaranteed.",
   },
   {
-    q: "What if my computer is slow?",
-    a: "It will mine, just slower. The network adjusts difficulty so blocks arrive at roughly the same cadence regardless of total hashrate, but the share of those blocks you win scales with your CPU. A modest machine still earns a proportional amount — less than a workstation, but the math is the same.",
+    q: "Do I need a beefy GPU?",
+    a: "A modern GPU is the fast path — the open-source miner targets Metal, Vulkan, and DX12 via wgpu, so anything from a recent laptop dGPU to a workstation card works. No CUDA, no driver install. CPU mining still earns blocks too; the protocol is memory-bound, not compute-bound, so commodity hardware stays competitive.",
   },
   {
     q: "Can someone steal my solution?",
