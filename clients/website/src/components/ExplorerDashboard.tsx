@@ -329,7 +329,7 @@ export function ExplorerDashboard({
                     Miner
                   </div>
                   <a
-                    href={`https://explorer.solana.com/address/${b.winner}`}
+                    href={`https://solscan.io/account/${b.winner}`}
                     target="_blank"
                     rel="noreferrer"
                     className="text-[13px] font-mono text-[var(--color-teal)] hover:text-[var(--color-rose)] transition-colors"
@@ -355,7 +355,7 @@ export function ExplorerDashboard({
                 </div>
                 <div className="col-span-12 md:col-span-3 text-left md:text-right">
                   <a
-                    href={`https://explorer.solana.com/tx/${b.sig}`}
+                    href={`https://solscan.io/tx/${b.sig}`}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1.5 text-[11px] font-mono text-[var(--color-fg-dim)] hover:text-[var(--color-rose)] transition-colors"
@@ -460,7 +460,7 @@ function AllTimeList({ rows }: { rows: AllTimeEntry[] }) {
                 Miner
               </div>
               <a
-                href={`https://explorer.solana.com/address/${row.miner}`}
+                href={`https://solscan.io/account/${row.miner}`}
                 target="_blank"
                 rel="noreferrer"
                 className="text-[13px] font-mono text-[var(--color-teal)] hover:text-[var(--color-rose)] transition-colors break-all"
@@ -582,7 +582,7 @@ function LeaderboardList({ rows }: { rows: LeaderboardEntry[] }) {
                 Miner
               </div>
               <a
-                href={`https://explorer.solana.com/address/${row.miner}`}
+                href={`https://solscan.io/account/${row.miner}`}
                 target="_blank"
                 rel="noreferrer"
                 className="text-[13px] font-mono text-[var(--color-teal)] hover:text-[var(--color-rose)] transition-colors break-all"

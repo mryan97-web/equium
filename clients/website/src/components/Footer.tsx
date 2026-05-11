@@ -59,8 +59,8 @@ export function Footer() {
             items={[
               { label: "X / Twitter", href: "https://x.com/EquiumEQM" },
               {
-                label: "Solana Explorer",
-                href: "https://explorer.solana.com/address/ZKGMUfxiRCXFPnqz9zgqAnuqJy15jk7fKbR4o6FuEQM",
+                label: "Solscan",
+                href: "https://solscan.io/account/ZKGMUfxiRCXFPnqz9zgqAnuqJy15jk7fKbR4o6FuEQM",
               },
             ]}
           />

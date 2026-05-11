@@ -228,23 +228,53 @@ export interface LeaderboardEntry {
 }
 
 /**
- * Aggregate the last N program signatures into a top-miners leaderboard.
- * Sorts by block count desc, returns up to `take` rows.
+ * Read the N most recent mined blocks straight from the indexer's
+ * blocks_by_height ZSET. Powers both the recent leaderboard and the
+ * hashrate series — they both work over a sliding window of recent
+ * blocks, just with different aggregations on top.
+ *
+ * Returns newest-first (matches `fetchAllMinedInRange`'s historical
+ * contract so call sites stay drop-in).
+ */
+async function fetchRecentBlockRecords(limit: number): Promise<MinedBlock[]> {
+  const redis = getRedisClient();
+  if (!redis) return fetchAllMinedInRange(limit);
+  try {
+    const members = await redis.zrange<(string | MinedBlock)[]>(
+      "equium:blocks:by_height:v1",
+      0,
+      Math.max(1, limit) - 1,
+      { rev: true }
+    );
+    if (!members || members.length === 0) return [];
+    return members.map((m) =>
+      typeof m === "string" ? (JSON.parse(m) as MinedBlock) : (m as MinedBlock)
+    );
+  } catch (e) {
+    console.error("fetchRecentBlockRecords (redis) failed", e);
+    return [];
+  }
+}
+
+/**
+ * Aggregate the N most recent mined blocks into a top-miners
+ * leaderboard. `scan` is now the number of recent *mined blocks* to
+ * consider (not raw signatures) — at the 1-block/min target, 200
+ * blocks covers ~3.3 hours, which matches the historical chain-scan
+ * window's effective coverage.
  */
 export async function fetchLeaderboard(
   scan = 200,
   take = 20
 ): Promise<LeaderboardEntry[]> {
-  return cached(`equium:leaderboard:${scan}:${take}:v1`, CACHE_TTL_SEC, () =>
-    fetchLeaderboardUncached(scan, take)
-  );
+  return fetchLeaderboardUncached(scan, take);
 }
 
 export async function fetchLeaderboardUncached(
   scan: number,
   take: number
 ): Promise<LeaderboardEntry[]> {
-  const blocks = await fetchAllMinedInRange(scan);
+  const blocks = await fetchRecentBlockRecords(scan);
   const map = new Map<string, LeaderboardEntry>();
   for (const b of blocks) {
     const existing = map.get(b.winner);
@@ -733,9 +763,7 @@ export async function fetchHashrateSeries(
   scan = 200,
   bucketCount = 30
 ): Promise<HashrateSeries> {
-  return cached(`equium:hashrate:${scan}:${bucketCount}:v1`, CACHE_TTL_SEC, () =>
-    fetchHashrateSeriesUncached(scan, bucketCount)
-  );
+  return fetchHashrateSeriesUncached(scan, bucketCount);
 }
 
 export async function fetchHashrateSeriesUncached(
@@ -743,7 +771,7 @@ export async function fetchHashrateSeriesUncached(
   bucketCount: number
 ): Promise<HashrateSeries> {
   const [blocks, state] = await Promise.all([
-    fetchAllMinedInRange(scan),
+    fetchRecentBlockRecords(scan),
     fetchState().catch(() => null),
   ]);
   const targetHex = state?.currentTargetHex ?? "";
