@@ -56,26 +56,35 @@ export async function cached<T>(
   }
 
   const fresh = await fn();
+  // Don't cache obviously-failed results. The fetchers in lib/rpc.ts
+  // swallow RPC errors and return null / [] so the API surface stays
+  // simple, but writing those to Redis under a 10s+ TTL would lock in
+  // a broken explorer page until the entry expired. Treat null as
+  // skip-cache; treat empty arrays as cacheable only briefly.
+  if (fresh === null || fresh === undefined) return fresh;
   try {
-    await redis.set(key, fresh, { ex: ttlSec });
+    const isEmptyArray = Array.isArray(fresh) && fresh.length === 0;
+    await redis.set(key, fresh, { ex: isEmptyArray ? 3 : ttlSec });
   } catch {
-    // Best-effort write. A failed cache write is just a missed
-    // optimization, not a failure of the request.
+    // Best-effort write.
   }
   return fresh;
 }
 
-/** Force-refresh a cached entry. Used by the cron pre-warm route. */
+/** Force-refresh a cached entry. Used by the cron pre-warm route.
+ * Mirrors the skip-on-null / short-TTL-on-empty rules from `cached()`. */
 export async function warm<T>(
   key: string,
   ttlSec: number,
   fn: () => Promise<T>
 ): Promise<T> {
   const fresh = await fn();
+  if (fresh === null || fresh === undefined) return fresh;
   const redis = getRedis();
   if (redis) {
     try {
-      await redis.set(key, fresh, { ex: ttlSec });
+      const isEmptyArray = Array.isArray(fresh) && fresh.length === 0;
+      await redis.set(key, fresh, { ex: isEmptyArray ? 3 : ttlSec });
     } catch {}
   }
   return fresh;
