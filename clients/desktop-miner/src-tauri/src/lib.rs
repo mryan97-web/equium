@@ -4,6 +4,7 @@
 
 mod keystore;
 mod miner;
+mod sender;
 mod settings;
 mod state;
 
@@ -52,6 +53,9 @@ pub fn run() {
             miner::start_mining,
             miner::stop_mining,
             miner::miner_status,
+            // Sending
+            sender::send_sol,
+            sender::send_eqm,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tauri application");

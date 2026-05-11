@@ -20,13 +20,13 @@ export default function TopBar({ status, onLocked }: Props) {
     <>
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark" aria-hidden />
+          <img src="/logo.png" alt="" className="brand-logo" />
           <span className="brand-name">Equium</span>
-          <span className="brand-tag">miner</span>
+          <span className="brand-mono">$EQM</span>
         </div>
         <div className="topbar-right">
           {status?.status === "unlocked" && (
-            <span className="pill pill-ok">
+            <span className="pill pill-ok mono">
               <span className="dot dot-ok" />
               {shortPk(status.pubkey, 4, 4)}
             </span>
@@ -34,7 +34,6 @@ export default function TopBar({ status, onLocked }: Props) {
           <button
             className="btn btn-ghost"
             onClick={() => setSettingsOpen(true)}
-            aria-label="Settings"
           >
             Settings
           </button>

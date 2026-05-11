@@ -96,6 +96,13 @@ export const startMining = () => invoke<MinerStatus>("start_mining");
 export const stopMining = () => invoke<MinerStatus>("stop_mining");
 export const minerStatus = () => invoke<MinerStatus>("miner_status");
 
+// Sending
+export type SendResult = { signature: string };
+export const sendSol = (to: string, solAmount: number) =>
+  invoke<SendResult>("send_sol", { to, solAmount });
+export const sendEqm = (to: string, eqmAmount: number) =>
+  invoke<SendResult>("send_eqm", { to, eqmAmount });
+
 // Event helpers (return Unlisten functions)
 export const onMinerLog = (cb: (e: LogEvent) => void): Promise<UnlistenFn> =>
   listen<LogEvent>("miner://log", (ev) => cb(ev.payload));

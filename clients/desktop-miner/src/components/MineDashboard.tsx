@@ -24,15 +24,15 @@ import {
   formatSol,
   shortPk,
 } from "../lib/format";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyText } from "../lib/clipboard";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import SendModal from "./SendModal";
 
 type Props = {
   pubkey: string;
 };
 
 type DashLog = LogEvent & { ts: number };
-
 const MAX_LOGS = 200;
 
 export default function MineDashboard({ pubkey }: Props) {
@@ -44,9 +44,17 @@ export default function MineDashboard({ pubkey }: Props) {
   const [hashrate, setHashrate] = useState(0);
   const [secretVisible, setSecretVisible] = useState(false);
   const [secret, setSecret] = useState<string | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
   const logBoxRef = useRef<HTMLDivElement>(null);
 
-  // Initial fetch + periodic refresh of read-only state.
+  const refreshBalances = async () => {
+    try {
+      const b = await getWalletBalances();
+      setBalances(b);
+    } catch {}
+  };
+
+  // Polled read-only refresh
   useEffect(() => {
     let alive = true;
     const tick = async () => {
@@ -73,7 +81,7 @@ export default function MineDashboard({ pubkey }: Props) {
     };
   }, []);
 
-  // Wire up event subscriptions.
+  // Event subscriptions
   useEffect(() => {
     const unlistens: Array<() => void> = [];
     onMinerLog((e) => {
@@ -106,14 +114,9 @@ export default function MineDashboard({ pubkey }: Props) {
             }
           : s
       );
-      // refresh balances soon-ish after a block
-      setTimeout(() => {
-        getWalletBalances().then(setBalances).catch(() => {});
-      }, 1500);
+      setTimeout(refreshBalances, 1500);
     }).then((u) => unlistens.push(u));
-    onMinerRound(() => {
-      // No-op; round info is captured via attempts/logs.
-    }).then((u) => unlistens.push(u));
+    onMinerRound(() => {}).then((u) => unlistens.push(u));
     onMinerStatus((e) => setRunning(e.running)).then((u) =>
       unlistens.push(u)
     );
@@ -122,7 +125,6 @@ export default function MineDashboard({ pubkey }: Props) {
     };
   }, []);
 
-  // Auto-scroll log box.
   useEffect(() => {
     const el = logBoxRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -134,10 +136,7 @@ export default function MineDashboard({ pubkey }: Props) {
       setRunning(s.running);
       setStats(s.stats);
     } catch (e: any) {
-      setLogs((prev) => [
-        ...prev,
-        { ts: Date.now(), level: "err", message: String(e) },
-      ]);
+      pushLog(setLogs, "err", String(e));
     }
   };
   const onStop = async () => {
@@ -146,16 +145,13 @@ export default function MineDashboard({ pubkey }: Props) {
       setRunning(s.running);
       setStats(s.stats);
     } catch (e: any) {
-      setLogs((prev) => [
-        ...prev,
-        { ts: Date.now(), level: "err", message: String(e) },
-      ]);
+      pushLog(setLogs, "err", String(e));
     }
   };
 
   const revealSecret = async () => {
     if (secret) {
-      setSecretVisible(!secretVisible);
+      setSecretVisible((v) => !v);
       return;
     }
     try {
@@ -167,224 +163,108 @@ export default function MineDashboard({ pubkey }: Props) {
     }
   };
 
-  const insufficientSol = (balances?.sol_lamports ?? 0) < 5_000_000; // 0.005 SOL
+  const insufficientSol = (balances?.sol_lamports ?? 0) < 5_000_000;
   const miningOpen = program?.mining_open ?? false;
   const startedAt = stats?.started_at_unix_ms ?? 0;
   const uptime = running && startedAt > 0 ? Date.now() - startedAt : 0;
 
   return (
-    <div className="stack" style={{ gap: 20 }}>
-      <HeroPanel
+    <div className="stack">
+      <Hero
         running={running}
         miningOpen={miningOpen}
         insufficientSol={insufficientSol}
+        hashrate={hashrate}
+        blocksMined={stats?.blocks_mined ?? 0}
+        earnedBase={stats?.total_earned_base ?? 0}
+        uptime={uptime}
         onStart={onStart}
         onStop={onStop}
       />
 
-      <div className="grid-3">
-        <StatCard
-          label="Blocks mined"
-          value={stats?.blocks_mined ?? 0}
-          sub={running ? "session in progress" : "since last start"}
-        />
-        <StatCard
-          label="Total earned"
-          value={`${formatEqm(stats?.total_earned_base ?? 0, EQM_DECIMALS)} EQM`}
-          sub={`balance: ${formatEqm(balances?.eqm_base ?? 0, EQM_DECIMALS)} EQM`}
-        />
-        <StatCard
-          label="Hashrate"
-          value={fmtHashrate(hashrate)}
-          sub={`uptime ${fmtUptime(uptime)}`}
-        />
-      </div>
-
       <div className="grid-2">
-        <div className="card stack">
-          <h3>Wallet</h3>
-          <div className="row-between">
-            <div className="mono" style={{ fontSize: 13 }}>
-              {shortPk(pubkey, 6, 6)}
-            </div>
-            <button className="copybtn" onClick={() => writeText(pubkey)}>
-              Copy address
-            </button>
-          </div>
-          <div className="divider" />
-          <div className="row-between">
-            <div>
-              <div className="stat-label">SOL</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>
-                {balances ? formatSol(balances.sol_lamports) : "—"}
-              </div>
-            </div>
-            <div>
-              <div className="stat-label">EQM</div>
-              <div style={{ fontSize: 18, fontWeight: 600 }}>
-                {balances
-                  ? formatEqm(balances.eqm_base, EQM_DECIMALS)
-                  : "—"}
-              </div>
-            </div>
-          </div>
-          {insufficientSol && (
-            <div className="alert alert-warn">
-              Fund this wallet with a small amount of SOL to cover mining tx
-              fees (~0.005 SOL covers ~30 attempts).
-            </div>
-          )}
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn" onClick={revealSecret}>
-              {secretVisible ? "Hide secret" : "Export secret"}
-            </button>
-            {secret && secretVisible && (
-              <button
-                className="copybtn"
-                onClick={() => writeText(secret)}
-              >
-                Copy
-              </button>
-            )}
-          </div>
-          {secret && secretVisible && (
-            <div className="secret-box mono">{secret}</div>
-          )}
-        </div>
-
-        <div className="card stack">
-          <h3>Network</h3>
-          {program ? (
-            <>
-              <Row k="Mining open" v={
-                program.mining_open ? (
-                  <span className="pill pill-ok">
-                    <span className="dot dot-ok" /> live
-                  </span>
-                ) : (
-                  <span className="pill pill-warn">
-                    <span className="dot dot-warn" /> not yet
-                  </span>
-                )
-              } />
-              <Row k="Block height" v={program.block_height} />
-              <Row
-                k="Reward"
-                v={`${formatEqm(program.epoch_reward, EQM_DECIMALS)} EQM / block`}
-              />
-              <Row
-                k="Target prefix"
-                v={
-                  <span className="mono dim" style={{ fontSize: 12 }}>
-                    0x{program.current_target_hex.slice(0, 8)}…
-                  </span>
-                }
-              />
-              <Row
-                k="Equihash"
-                v={
-                  <span className="mono">
-                    ({program.equihash_n}, {program.equihash_k})
-                  </span>
-                }
-              />
-              <Row
-                k="Mint"
-                v={
-                  <button
-                    className="copybtn mono"
-                    onClick={() => writeText(program.mint)}
-                    title="Click to copy"
-                  >
-                    {shortPk(program.mint, 6, 6)}
-                  </button>
-                }
-              />
-            </>
-          ) : (
-            <div className="muted">Reading on-chain state…</div>
-          )}
-          <div className="divider" />
-          <button
-            className="btn btn-ghost"
-            onClick={() => openUrl("https://equium.xyz/docs/rpc")}
-            style={{ alignSelf: "flex-start" }}
-          >
-            Set up your own RPC →
-          </button>
-        </div>
+        <WalletCard
+          pubkey={pubkey}
+          balances={balances}
+          insufficientSol={insufficientSol}
+          secret={secret}
+          secretVisible={secretVisible}
+          onReveal={revealSecret}
+          onSend={() => setSendOpen(true)}
+        />
+        <NetworkCard program={program} />
       </div>
 
-      <div className="card stack">
-        <div className="row-between">
-          <h3>Activity</h3>
-          <span className="muted" style={{ fontSize: 12 }}>
-            try #{stats?.try_in_round ?? 0} · {(stats?.cumulative_nonces ?? 0).toLocaleString()} nonces
-          </span>
-        </div>
-        <div className="log" ref={logBoxRef}>
-          {logs.length === 0 && (
-            <div className="dim">
-              No activity yet. Click Start to begin mining.
-            </div>
-          )}
-          {logs.map((l, i) => (
-            <div key={i} className={`log-line log-${l.level}`}>
-              {fmtTime(l.ts)} {l.message}
-            </div>
-          ))}
-        </div>
-      </div>
+      <ActivityCard
+        logs={logs}
+        logBoxRef={logBoxRef}
+        tryInRound={stats?.try_in_round ?? 0}
+        cumulativeNonces={stats?.cumulative_nonces ?? 0}
+      />
+
+      <SendModal
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        fromPubkey={pubkey}
+        solLamports={balances?.sol_lamports ?? 0}
+        eqmBase={balances?.eqm_base ?? 0}
+        onSent={refreshBalances}
+      />
     </div>
   );
 }
 
-function HeroPanel({
+function Hero({
   running,
   miningOpen,
   insufficientSol,
+  hashrate,
+  blocksMined,
+  earnedBase,
+  uptime,
   onStart,
   onStop,
 }: {
   running: boolean;
   miningOpen: boolean;
   insufficientSol: boolean;
+  hashrate: number;
+  blocksMined: number;
+  earnedBase: number;
+  uptime: number;
   onStart: () => void;
   onStop: () => void;
 }) {
-  const status = running
-    ? { label: "Mining", className: "pill pill-ok", dot: "dot-ok" }
-    : miningOpen
-      ? { label: "Idle", className: "pill", dot: "dot-warn" }
-      : { label: "Network not open", className: "pill pill-bad", dot: "dot-bad" };
+  const statusLabel = running ? "Mining" : miningOpen ? "Ready" : "Network closed";
+  const statusDot = running ? "dot-ok dot-pulse" : miningOpen ? "dot-warn" : "dot-bad";
 
   return (
-    <div className="card">
-      <div className="row-between">
-        <div>
-          <h1>
-            {running ? "Mining Equium" : "Ready to mine"}
-          </h1>
-          <p className="muted" style={{ marginTop: 6 }}>
+    <div className="card-hero">
+      <div className="row-between" style={{ alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+            <span className={`pill ${running ? "pill-ok" : ""} mono`}>
+              <span className={`dot ${statusDot}`} />
+              {statusLabel}
+            </span>
+          </div>
+          <h1>{running ? "Solving Equihash" : "Ready to mine"}</h1>
+          <p className="muted" style={{ marginTop: 8, maxWidth: 480, fontSize: 13.5 }}>
             {running
-              ? "Your CPU is solving Equihash puzzles and submitting solutions to Solana."
+              ? "Your CPU is racing the network. Every solved block credits 25 EQM to this wallet."
               : miningOpen
-                ? "Click Start. Each block found mints 25 EQM into your wallet."
-                : "The protocol vault hasn't been funded yet — check back soon."}
+                ? "Press start. The protocol pays 25 EQM per block to the first valid solution it sees."
+                : "The mineable vault hasn't been funded yet — mining will open once admin loads it."}
           </p>
         </div>
-        <div className="row" style={{ gap: 10 }}>
-          <span className={status.className}>
-            <span className={`dot ${status.dot}`} />
-            {status.label}
-          </span>
+        <div style={{ flexShrink: 0 }}>
           {running ? (
-            <button className="btn btn-danger" onClick={onStop}>
-              Stop
+            <button className="btn btn-danger btn-lg" onClick={onStop}>
+              Stop mining
             </button>
           ) : (
             <button
-              className="btn btn-primary"
+              className="btn btn-primary btn-lg"
               onClick={onStart}
               disabled={!miningOpen || insufficientSol}
               title={
@@ -400,28 +280,239 @@ function HeroPanel({
           )}
         </div>
       </div>
+
+      <div
+        style={{
+          marginTop: 22,
+          paddingTop: 18,
+          borderTop: "1px solid var(--line-hair)",
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 20,
+        }}
+      >
+        <Stat
+          label="Hashrate"
+          value={fmtHashrate(hashrate).split(" ")[0]}
+          unit={fmtHashrate(hashrate).split(" ")[1] ?? ""}
+          sub={`uptime ${fmtUptime(uptime)}`}
+        />
+        <Stat
+          label="Blocks mined"
+          value={blocksMined.toString()}
+          sub={running ? "session in progress" : "since last start"}
+        />
+        <Stat
+          label="Session earned"
+          value={formatEqm(earnedBase, EQM_DECIMALS)}
+          unit="EQM"
+          sub={`+${formatEqm(25_000_000, 0)} per block`}
+        />
+      </div>
     </div>
   );
 }
 
-function StatCard({
+function Stat({
   label,
   value,
+  unit,
   sub,
 }: {
   label: string;
-  value: React.ReactNode;
+  value: string;
+  unit?: string;
   sub?: string;
 }) {
   return (
-    <div className="card">
-      <div className="stat-label">{label}</div>
-      <div className="stat-num">{value}</div>
-      {sub && (
-        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-          {sub}
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 6 }}>
+        {label}
+      </div>
+      <div>
+        <span className="stat-num">{value}</span>
+        {unit && <span className="stat-unit">{unit}</span>}
+      </div>
+      {sub && <div className="stat-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function WalletCard({
+  pubkey,
+  balances,
+  insufficientSol,
+  secret,
+  secretVisible,
+  onReveal,
+  onSend,
+}: {
+  pubkey: string;
+  balances: Balances | null;
+  insufficientSol: boolean;
+  secret: string | null;
+  secretVisible: boolean;
+  onReveal: () => void;
+  onSend: () => void;
+}) {
+  return (
+    <div className="card stack">
+      <div className="row-between">
+        <h3 className="eyebrow">Wallet</h3>
+        <CopyBtn text={pubkey} label="Copy" />
+      </div>
+      <div className="pubkey">{pubkey}</div>
+
+      <div className="divider" />
+
+      <div className="row" style={{ gap: 32 }}>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            SOL
+          </div>
+          <div className="stat-num" style={{ fontSize: 22 }}>
+            {balances ? formatSol(balances.sol_lamports) : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="eyebrow" style={{ marginBottom: 4 }}>
+            EQM
+          </div>
+          <div className="stat-num" style={{ fontSize: 22 }}>
+            {balances ? formatEqm(balances.eqm_base, EQM_DECIMALS) : "—"}
+          </div>
+        </div>
+      </div>
+
+      {insufficientSol && (
+        <div className="alert alert-warn">
+          Fund this wallet with a small amount of SOL. ~0.005 SOL covers about
+          30 mining attempts.
         </div>
       )}
+
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn btn-primary" onClick={onSend}>
+          Send
+        </button>
+        <button className="btn" onClick={onReveal}>
+          {secretVisible ? "Hide secret" : "Export secret"}
+        </button>
+        {secret && secretVisible && <CopyBtn text={secret} label="Copy key" />}
+      </div>
+      {secret && secretVisible && (
+        <div className="secret-box mono">{secret}</div>
+      )}
+    </div>
+  );
+}
+
+function NetworkCard({ program }: { program: ProgramState | null }) {
+  if (!program) {
+    return (
+      <div className="card stack">
+        <h3 className="eyebrow">Network</h3>
+        <div className="muted">Reading on-chain state…</div>
+      </div>
+    );
+  }
+  return (
+    <div className="card stack">
+      <h3 className="eyebrow">Network</h3>
+      <Row
+        k="Status"
+        v={
+          program.mining_open ? (
+            <span className="pill pill-ok mono">
+              <span className="dot dot-ok" /> live
+            </span>
+          ) : (
+            <span className="pill pill-warn mono">
+              <span className="dot dot-warn" /> waiting on vault
+            </span>
+          )
+        }
+      />
+      <Row k="Block height" v={<span className="mono">{program.block_height.toLocaleString()}</span>} />
+      <Row
+        k="Reward"
+        v={
+          <span className="mono">
+            {formatEqm(program.epoch_reward, EQM_DECIMALS)}{" "}
+            <span className="dim">EQM</span>
+          </span>
+        }
+      />
+      <Row
+        k="Target prefix"
+        v={
+          <span className="mono dim" style={{ fontSize: 11.5 }}>
+            0x{program.current_target_hex.slice(0, 8)}…
+          </span>
+        }
+      />
+      <Row
+        k="Equihash"
+        v={
+          <span className="mono">
+            ({program.equihash_n}, {program.equihash_k})
+          </span>
+        }
+      />
+      <Row
+        k="Mint"
+        v={
+          <CopyBtn
+            text={program.mint}
+            label={shortPk(program.mint, 4, 4)}
+            inline
+          />
+        }
+      />
+      <div className="divider" />
+      <button
+        className="btn btn-ghost"
+        onClick={() => openUrl("https://equium.xyz/docs/rpc")}
+        style={{ alignSelf: "flex-start", padding: "0 10px" }}
+      >
+        Plug in your own RPC →
+      </button>
+    </div>
+  );
+}
+
+function ActivityCard({
+  logs,
+  logBoxRef,
+  tryInRound,
+  cumulativeNonces,
+}: {
+  logs: DashLog[];
+  logBoxRef: React.RefObject<HTMLDivElement | null>;
+  tryInRound: number;
+  cumulativeNonces: number;
+}) {
+  return (
+    <div className="card stack">
+      <div className="row-between">
+        <h3 className="eyebrow">Activity</h3>
+        <span className="mono dim" style={{ fontSize: 11 }}>
+          try {tryInRound} · {cumulativeNonces.toLocaleString()} nonces
+        </span>
+      </div>
+      <div className="log" ref={logBoxRef}>
+        {logs.length === 0 && (
+          <div className="faint mono" style={{ padding: "12px 0" }}>
+            no activity yet — press start to begin mining
+          </div>
+        )}
+        {logs.map((l, i) => (
+          <div key={i} className={`log-line log-${l.level}`}>
+            <span className="log-time">{fmtTime(l.ts)}</span>
+            <span>{l.message}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -435,6 +526,45 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
       <span>{v}</span>
     </div>
   );
+}
+
+function CopyBtn({
+  text,
+  label,
+  inline,
+}: {
+  text: string;
+  label: string;
+  inline?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const onClick = async () => {
+    const ok = await copyText(text);
+    if (!ok) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      className={`copybtn ${copied ? "copied" : ""}`}
+      onClick={onClick}
+      style={inline ? { fontSize: 11 } : undefined}
+    >
+      {copied ? "✓ copied" : label}
+    </button>
+  );
+}
+
+function pushLog(
+  setLogs: React.Dispatch<React.SetStateAction<DashLog[]>>,
+  level: "info" | "ok" | "err",
+  message: string
+) {
+  setLogs((prev) => {
+    const next = [...prev, { ts: Date.now(), level, message }];
+    if (next.length > MAX_LOGS) next.splice(0, next.length - MAX_LOGS);
+    return next;
+  });
 }
 
 function fmtTime(ts: number): string {

@@ -148,3 +148,14 @@ fn derive_ata(owner: &Pubkey, mint: &Pubkey, token_program: &Pubkey) -> Pubkey {
         token_program,
     )
 }
+
+/// Fetch the program's configured mint from the CONFIG PDA. Used by the
+/// sender module so it doesn't have to duplicate the deserialization logic.
+pub fn current_program_mint(rpc: &RpcClient) -> anyhow::Result<Pubkey> {
+    let program_id = equium::ID;
+    let (config_pda, _) = Pubkey::find_program_address(&[CONFIG_SEED], &program_id);
+    let acct = rpc.get_account(&config_pda).context("config not found")?;
+    let mut data = acct.data.as_slice();
+    let cfg = EquiumConfig::try_deserialize(&mut data)?;
+    Ok(cfg.mint)
+}

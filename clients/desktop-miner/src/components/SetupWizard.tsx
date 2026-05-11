@@ -4,7 +4,7 @@ import {
   importWallet,
   exportSecret,
 } from "../lib/api";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { copyText } from "../lib/clipboard";
 
 type Mode = "choose" | "create-password" | "create-reveal" | "import";
 
@@ -166,7 +166,7 @@ export default function SetupWizard({ onDone }: Props) {
             <div className="row" style={{ gap: 8 }}>
               <button
                 className="copybtn"
-                onClick={() => writeText(reveal.secret)}
+                onClick={() => copyText(reveal.secret)}
               >
                 Copy to clipboard
               </button>
