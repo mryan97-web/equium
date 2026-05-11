@@ -15,6 +15,7 @@ import {
   fetchRecentBlocksUncached,
   fetchLeaderboardUncached,
   fetchHashrateSeriesUncached,
+  fetchAllTimeLeaderboardUncached,
   updateAllTimeAggregator,
 } from "@/lib/rpc";
 
@@ -54,6 +55,16 @@ export async function GET(req: NextRequest) {
     updateAllTimeAggregator(),
   ]);
 
+  // After the aggregator has run, pre-render the cached top-50 from
+  // the freshly-updated Redis state. Subsequent /api/state requests
+  // read this cached blob instead of redoing the ZREVRANGE + HMGET
+  // assembly per request.
+  const topResult = await warm(
+    "equium:alltime:top:50:v1",
+    TTL,
+    () => fetchAllTimeLeaderboardUncached(50)
+  );
+
   const allTime = results[4];
   return NextResponse.json({
     ok: true,
@@ -66,5 +77,7 @@ export async function GET(req: NextRequest) {
       allTime.status === "fulfilled"
         ? { processed: allTime.value.processed, newest: allTime.value.newest }
         : { error: String((allTime as PromiseRejectedResult).reason) },
+    alltime_top:
+      topResult && Array.isArray(topResult) ? topResult.length : 0,
   });
 }

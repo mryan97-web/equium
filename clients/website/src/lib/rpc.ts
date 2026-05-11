@@ -247,10 +247,28 @@ export interface AllTimeEntry {
   hashratePerSec: number;
 }
 
+// Aggregator schema (Redis):
+//
+//   alltime:miners      HASH  miner_pubkey → total blocks
+//   alltime:rewards     HASH  miner_pubkey → total reward (base units)
+//   alltime:last_seen   HASH  miner_pubkey → unix ts of last block
+//   alltime:last_height HASH  miner_pubkey → height of last block
+//   alltime:rank        ZSET  score = total blocks, member = miner pubkey
+//                              ← gives O(log N + take) top-N reads
+//                                regardless of total unique miner count.
+//   alltime:cursor      STRING newest program signature processed
+//   recent:miner_blocks ZSET  score = ts, member = "<miner>:<height>"
+//                              (last hour, used for per-miner hashrate)
+//
+// The HASH+ZSET pair is intentionally redundant: HGET'ing per-field
+// data after a ZREVRANGE gives ranked reads without a sort step, but
+// the HASHes still carry the per-miner side data we'd otherwise need
+// to walk separately.
 const ALLTIME_MINERS = "equium:alltime:miners:v1";
 const ALLTIME_REWARDS = "equium:alltime:rewards:v1";
 const ALLTIME_LAST_SEEN = "equium:alltime:last_seen:v1";
 const ALLTIME_LAST_HEIGHT = "equium:alltime:last_height:v1";
+const ALLTIME_RANK = "equium:alltime:rank:v1";
 const ALLTIME_CURSOR = "equium:alltime:cursor:v1";
 const RECENT_MINER_BLOCKS = "equium:recent:miner_blocks:v1";
 const RECENT_WINDOW_SEC = 3600; // 1 hour
@@ -276,6 +294,25 @@ export async function updateAllTimeAggregator(): Promise<{
     const conn = readConnection();
     const PROGRAM_ID = new PublicKey(idl.address);
     const cursor = await redis.get<string>(ALLTIME_CURSOR).catch(() => null);
+
+    // One-time migration: if the rank ZSET is empty but the per-miner
+    // HASH already has data (e.g. we just deployed the indexed read
+    // path against an existing aggregator), rebuild the ZSET from the
+    // HASH so the fast `ZREVRANGE` read path lights up immediately.
+    // Idempotent — subsequent ticks short-circuit on the ZCARD check.
+    const rankCount = await redis.zcard(ALLTIME_RANK).catch(() => 0);
+    if (rankCount === 0) {
+      const all = await redis
+        .hgetall<Record<string, number>>(ALLTIME_MINERS)
+        .catch(() => null);
+      if (all && Object.keys(all).length > 0) {
+        for (const [miner, blocks] of Object.entries(all)) {
+          await redis
+            .zadd(ALLTIME_RANK, { score: Number(blocks), member: miner })
+            .catch(() => null);
+        }
+      }
+    }
 
     // First run: scan up to MAX_SIGS most recent signatures and treat
     // them as the historical baseline. After this, future ticks use
@@ -328,6 +365,11 @@ export async function updateAllTimeAggregator(): Promise<{
         await redis.hincrby(ALLTIME_REWARDS, winner, reward);
         await redis.hset(ALLTIME_LAST_SEEN, { [winner]: ts });
         await redis.hset(ALLTIME_LAST_HEIGHT, { [winner]: height });
+        // Keep the sorted-by-blocks index in lockstep. ZINCRBY adds
+        // the score to whatever's already there (or seeds it from 0
+        // for a first-time miner), so a top-N read is a single
+        // ZREVRANGE — no full HGETALL + sort needed.
+        await redis.zincrby(ALLTIME_RANK, 1, winner);
 
         // Track this block in the recent-blocks ZSET (score = ts,
         // member = miner:height so duplicates are impossible).
@@ -355,38 +397,85 @@ export async function updateAllTimeAggregator(): Promise<{
 }
 
 /**
- * Read the all-time top-N miners from the Redis HASH aggregator and
- * decorate each row with hashrate (derived from per-miner blocks in
- * the last hour + current difficulty target).
+ * Read the top-N all-time miners. Cached so concurrent requests don't
+ * each spin up a Redis pipeline; the per-miner aggregator HASHes only
+ * change when the cron runs, so a short cache is invisible.
  */
 export async function fetchAllTimeLeaderboard(
+  take = 50
+): Promise<AllTimeEntry[]> {
+  return cached(
+    `equium:alltime:top:${take}:v1`,
+    CACHE_TTL_SEC,
+    () => fetchAllTimeLeaderboardUncached(take)
+  );
+}
+
+export async function fetchAllTimeLeaderboardUncached(
   take = 50
 ): Promise<AllTimeEntry[]> {
   const redis = getRedisClient();
   if (!redis) return [];
 
   try {
-    const [miners, rewards, lastSeen, lastHeight, state, recent] =
-      await Promise.all([
-        redis.hgetall<Record<string, number>>(ALLTIME_MINERS),
-        redis.hgetall<Record<string, number>>(ALLTIME_REWARDS),
-        redis.hgetall<Record<string, number>>(ALLTIME_LAST_SEEN),
-        redis.hgetall<Record<string, number>>(ALLTIME_LAST_HEIGHT),
-        fetchState().catch(() => null),
-        // Members with score in [now-RECENT_WINDOW_SEC, +inf] are the
-        // recent-1hr blocks. Each member is "<miner>:<height>" so we
-        // can count per miner.
-        redis.zrange<string[]>(
-          RECENT_MINER_BLOCKS,
-          Math.floor(Date.now() / 1000) - RECENT_WINDOW_SEC,
-          "+inf",
-          { byScore: true }
-        ),
-      ]);
+    // Fast path: ZREVRANGE the rank ZSET — O(log N + take) — to get
+    // the top-N miners by block count in sorted order, then HMGET the
+    // side data per row. No full HGETALL, no in-memory sort.
+    const ranked = (await redis
+      .zrange<string[]>(ALLTIME_RANK, 0, take - 1, {
+        rev: true,
+        withScores: true,
+      })
+      .catch(() => [] as string[])) ?? [];
 
-    if (!miners || Object.keys(miners).length === 0) return [];
+    // Upstash's withScores returns a flat [member, score, member,
+    // score, ...] array. Split it.
+    const miners: string[] = [];
+    const blockCounts: number[] = [];
+    for (let i = 0; i < ranked.length; i += 2) {
+      miners.push(String(ranked[i]));
+      blockCounts.push(Number(ranked[i + 1]));
+    }
 
-    // Per-miner block count in the last hour.
+    // Transition fallback: if the rank ZSET hasn't been populated yet
+    // (running the new code against an old cache snapshot), fall back
+    // to the legacy HGETALL+sort path. One cron tick later the ZSET
+    // is live and we never hit this branch again.
+    let useFallback = miners.length === 0;
+    if (useFallback) {
+      const all = await redis
+        .hgetall<Record<string, number>>(ALLTIME_MINERS)
+        .catch(() => null);
+      if (all) {
+        const entries = Object.entries(all)
+          .map(([m, b]) => [m, Number(b)] as const)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, take);
+        for (const [m, b] of entries) {
+          miners.push(m);
+          blockCounts.push(b);
+        }
+      }
+    }
+
+    if (miners.length === 0) return [];
+
+    // Pull the side data we need only for the rows we're returning.
+    const [rewards, lastSeen, lastHeight, state, recent] = await Promise.all([
+      redis.hmget<Record<string, number>>(ALLTIME_REWARDS, ...miners),
+      redis.hmget<Record<string, number>>(ALLTIME_LAST_SEEN, ...miners),
+      redis.hmget<Record<string, number>>(ALLTIME_LAST_HEIGHT, ...miners),
+      fetchState().catch(() => null),
+      // Recent-1hr block members are "<miner>:<height>" tuples.
+      redis.zrange<string[]>(
+        RECENT_MINER_BLOCKS,
+        Math.floor(Date.now() / 1000) - RECENT_WINDOW_SEC,
+        "+inf",
+        { byScore: true }
+      ),
+    ]);
+
+    // Per-miner block count over the recent window.
     const recentCount = new Map<string, number>();
     for (const member of recent || []) {
       const colon = (member as string).indexOf(":");
@@ -396,14 +485,12 @@ export async function fetchAllTimeLeaderboard(
     }
 
     const targetHex = state?.currentTargetHex ?? "";
-    const rows: AllTimeEntry[] = Object.entries(miners).map(([m, blocks]) => {
+    const rows: AllTimeEntry[] = miners.map((m, i) => {
       const recentBlocks = recentCount.get(m) ?? 0;
-      // blocks/sec in the recent window → hashrate via the standard
-      // formula. estimateNetworkHashrate takes blocks/min, so convert.
       const bpm = (recentBlocks / RECENT_WINDOW_SEC) * 60;
       return {
         miner: m,
-        blocks: Number(blocks),
+        blocks: blockCounts[i],
         totalRewardBase: Number(rewards?.[m] ?? 0),
         lastSeen: Number(lastSeen?.[m] ?? 0),
         lastHeight: Number(lastHeight?.[m] ?? 0),
@@ -411,8 +498,7 @@ export async function fetchAllTimeLeaderboard(
       };
     });
 
-    rows.sort((a, b) => b.blocks - a.blocks);
-    return rows.slice(0, take);
+    return rows;
   } catch (e) {
     console.error("fetchAllTimeLeaderboard failed", e);
     return [];
