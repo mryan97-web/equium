@@ -6,6 +6,7 @@ import {
 } from "@coral-xyz/anchor";
 import idl from "../idl.json";
 import { CONFIG_PDA } from "./program";
+import { cached } from "./cache";
 
 // Server-side RPC URL (full upstream URL with API key). Never sent to the
 // browser; only used by server components, /api/state, /api/rpc, and OG
@@ -76,6 +77,10 @@ const hex = (bytes: number[] | Uint8Array): string =>
     .join("");
 
 export async function fetchState(): Promise<EquiumState | null> {
+  return cached("equium:state:v1", 10, fetchStateUncached);
+}
+
+export async function fetchStateUncached(): Promise<EquiumState | null> {
   try {
     const conn = readConnection();
     const program = readProgram(conn);
@@ -118,6 +123,14 @@ export interface MinedBlock {
  * Returns up to `limit` mined blocks ordered newest-first.
  */
 export async function fetchRecentBlocks(limit = 12): Promise<MinedBlock[]> {
+  return cached(`equium:blocks:${limit}:v1`, 20, () =>
+    fetchRecentBlocksUncached(limit)
+  );
+}
+
+export async function fetchRecentBlocksUncached(
+  limit: number
+): Promise<MinedBlock[]> {
   try {
     const conn = readConnection();
     const PROGRAM_ID = new PublicKey(idl.address);
@@ -174,6 +187,15 @@ export interface LeaderboardEntry {
 export async function fetchLeaderboard(
   scan = 200,
   take = 20
+): Promise<LeaderboardEntry[]> {
+  return cached(`equium:leaderboard:${scan}:${take}:v1`, 60, () =>
+    fetchLeaderboardUncached(scan, take)
+  );
+}
+
+export async function fetchLeaderboardUncached(
+  scan: number,
+  take: number
 ): Promise<LeaderboardEntry[]> {
   const blocks = await fetchAllMinedInRange(scan);
   const map = new Map<string, LeaderboardEntry>();
@@ -296,6 +318,15 @@ export function estimateNetworkHashrate(
 export async function fetchHashrateSeries(
   scan = 200,
   bucketCount = 30
+): Promise<HashrateSeries> {
+  return cached(`equium:hashrate:${scan}:${bucketCount}:v1`, 30, () =>
+    fetchHashrateSeriesUncached(scan, bucketCount)
+  );
+}
+
+export async function fetchHashrateSeriesUncached(
+  scan: number,
+  bucketCount: number
 ): Promise<HashrateSeries> {
   const [blocks, state] = await Promise.all([
     fetchAllMinedInRange(scan),
