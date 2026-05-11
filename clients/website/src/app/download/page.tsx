@@ -40,7 +40,7 @@ export default function DownloadPage() {
           </p>
 
           {/* OS picker */}
-          <div className="grid sm:grid-cols-3 gap-3 mb-10">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-10">
             <OsCard
               label="macOS"
               hint="Apple Silicon or Intel"
@@ -55,6 +55,11 @@ export default function DownloadPage() {
               label="Windows"
               hint="via WSL2 (recommended)"
               href="#windows"
+            />
+            <OsCard
+              label="GPU"
+              hint="hybrid wgpu miner · new"
+              href="#gpu"
             />
           </div>
 
@@ -217,14 +222,89 @@ cargo build --release -p equium-cli-miner
             </Callout>
           </Section>
 
+          {/* GPU miner */}
+          <Section id="gpu" title="Got a GPU? Use it.">
+            <Callout>
+              <strong>New: hybrid GPU/CPU miner (v0.1).</strong> Builds on
+              the same Rust toolchain you set up above. GPU runs the
+              BLAKE2b leaf-generation pass (~70% of solver time), CPU
+              still handles the Wagner rounds. Pure-CPU miners are
+              welcome and still earn EQM, but a modest GPU is a real
+              speedup vs the multi-core CPU path.
+            </Callout>
+
+            <P>
+              Cross-platform via <Code>wgpu</Code> — Metal on macOS,
+              Vulkan on Linux/Windows, DX12 on Windows. No CUDA, no
+              proprietary driver, no admin install.
+            </P>
+
+            <Block label="1 · Build">
+              <Pre>{`# (Rust + Solana CLI + keypair already set up from the section above)
+cd equium
+cargo build --release -p equium-gpu-miner`}</Pre>
+            </Block>
+
+            <Block label="2 · Verify the shader is correct for your driver">
+              <Pre>{`# Always passes — pure Rust port checked against blake2b_simd
+./target/release/equium-gpu-miner verify-cpu
+
+# Real GPU test — runs the WGSL shader on your hardware, compares
+# byte-for-byte to the CPU reference. Should print:
+#   ✓ GPU output matches CPU reference byte-for-byte.
+./target/release/equium-gpu-miner verify`}</Pre>
+              <P>
+                If <Code>verify</Code> mismatches, please open a GitHub
+                issue with the first-mismatch hex output and your GPU /
+                OS — we want to know about every driver case.
+              </P>
+            </Block>
+
+            <Block label="3 · Benchmark (optional)">
+              <Pre>{`./target/release/equium-gpu-miner bench`}</Pre>
+              <P>
+                Reports BLAKE2b throughput at full Equihash 96,5 width.
+                Useful for confirming a real adapter was picked up, not
+                a software fallback.
+              </P>
+            </Block>
+
+            <Block label="4 · Mine">
+              <Pre>{`./target/release/equium-gpu-miner mine \\
+  --rpc-url https://mainnet.helius-rpc.com/?api-key=YOUR_KEY \\
+  --keypair ~/.config/solana/id.json`}</Pre>
+              <P>
+                Same flags as the CPU miner. The GPU shared across all
+                CPU worker threads handles leaf generation; each CPU
+                thread runs its own Wagner pass and races for a
+                below-target nonce.
+              </P>
+            </Block>
+
+            <Callout tone="dim">
+              v0.1 is hybrid GPU+CPU. v0.2 moves the first Wagner round
+              onto GPU; v0.3 moves all of them; v0.4 brings the same
+              shader to the browser miner via WebGPU.{" "}
+              <a
+                href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
+                className="text-[var(--color-rose)] hover:underline"
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                Source + roadmap
+              </a>
+              .
+            </Callout>
+          </Section>
+
           {/* Performance notes */}
           <Section id="perf" title="Performance notes">
             <P>
-              The miner spawns one solver thread per physical core by
-              default. Override with <Code>--threads N</Code> if you want to
-              leave some cores free for other work. Each thread independently
-              grinds nonces; first to find a below-target solution wins the
-              round.
+              The CPU miner spawns one solver thread per physical core
+              by default. Override with <Code>--threads N</Code> if you
+              want to leave some cores free for other work. Each thread
+              independently grinds nonces; first to find a below-target
+              solution wins the round.
             </P>
             <P>
               The auto-retargeter brings difficulty up as more miners join
@@ -233,18 +313,12 @@ cargo build --release -p equium-cli-miner
               working as designed.
             </P>
             <P>
-              <strong>About GPU miners.</strong> Equihash 96,5 is memory-hard
-              by design, so GPU advantage is bounded relative to SHA-based
-              proof-of-work, but a tuned GPU implementation will still beat
-              a CPU. An open-source GPU miner is in the works (
-              <Link
-                href="/docs/protocol#gpu"
-                className="text-[var(--color-rose)] hover:underline"
-              >
-                see the protocol page
-              </Link>
-              ). Until then, a multi-core CPU still earns real EQM — the
-              retargeter just keeps the network balanced.
+              <strong>CPU vs GPU.</strong> Equihash 96,5 is memory-hard
+              by design, so GPU advantage is bounded relative to
+              SHA-based proof-of-work — typically 5-10x over a
+              multi-core CPU, not 1000x. The hybrid GPU miner in the
+              section above ships today; pure-GPU Wagner is on the
+              roadmap. Pure-CPU still earns blocks.
             </P>
           </Section>
 

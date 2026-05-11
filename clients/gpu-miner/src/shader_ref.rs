@@ -198,3 +198,145 @@ pub fn leaves(input: &[u8; 81], nonce: &[u8; 32], n_leaves: u32) -> Vec<u8> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blake2b_simd::Params;
+
+    /// Mirror what the CPU solver does so we have a trusted reference.
+    fn reference(input: &[u8; 81], nonce: &[u8; 32], call_idx: u32) -> [u8; 60] {
+        let mut personal = [0u8; 16];
+        personal[..8].copy_from_slice(b"ZcashPoW");
+        personal[8..12].copy_from_slice(&96u32.to_le_bytes());
+        personal[12..16].copy_from_slice(&5u32.to_le_bytes());
+
+        let mut s = Params::new().hash_length(60).personal(&personal).to_state();
+        s.update(input);
+        s.update(nonce);
+        s.update(&call_idx.to_le_bytes());
+
+        let mut out = [0u8; 60];
+        out.copy_from_slice(s.finalize().as_bytes());
+        out
+    }
+
+    fn make_input(seed: u8) -> [u8; 81] {
+        let mut input = [0u8; 81];
+        input[..9].copy_from_slice(b"Equium-v1");
+        for i in 9..81 {
+            input[i] = (i as u8).wrapping_mul(seed).wrapping_add(seed);
+        }
+        input
+    }
+
+    fn make_nonce(seed: u8) -> [u8; 32] {
+        let mut nonce = [0u8; 32];
+        for i in 0..32 {
+            nonce[i] = (i as u8).wrapping_mul(seed.wrapping_add(11)).wrapping_add(3);
+        }
+        nonce
+    }
+
+    #[test]
+    fn u64_rotr_matches_native_for_blake2b_rotations() {
+        // BLAKE2b only uses {32, 24, 16, 63}, but check a broader range
+        // since the implementation handles n < 32 and n > 32 separately.
+        for n in [16u32, 24, 32, 63, 1, 31, 33, 47] {
+            for val in [0u64, 1, 0x0123456789ABCDEF, u64::MAX, 0xDEADBEEFCAFEBABE] {
+                let port = u64_rotr((val as u32, (val >> 32) as u32), n);
+                let port_u64 = (port.0 as u64) | ((port.1 as u64) << 32);
+                let native = val.rotate_right(n);
+                assert_eq!(port_u64, native, "rotr({val:#x}, {n}) port={port_u64:#x} native={native:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn u64_add_carries_correctly() {
+        let cases = [
+            (0u64, 0u64),
+            (1, 1),
+            (u32::MAX as u64, 1),         // carry into hi
+            (u64::MAX, 1),                // wrap around
+            (0xFFFFFFFF, 0xFFFFFFFF),     // both u32::MAX
+            (0x0123456789ABCDEF, 0xFEDCBA9876543210),
+        ];
+        for (a, b) in cases {
+            let pa = (a as u32, (a >> 32) as u32);
+            let pb = (b as u32, (b >> 32) as u32);
+            let port = u64_add(pa, pb);
+            let port_u64 = (port.0 as u64) | ((port.1 as u64) << 32);
+            let native = a.wrapping_add(b);
+            assert_eq!(port_u64, native, "{a:#x} + {b:#x} port={port_u64:#x} native={native:#x}");
+        }
+    }
+
+    #[test]
+    fn first_leaf_matches_blake2b_simd() {
+        let input = make_input(7);
+        let nonce = make_nonce(13);
+        let mut personal = [0u8; 16];
+        personal[..8].copy_from_slice(b"ZcashPoW");
+        personal[8..12].copy_from_slice(&96u32.to_le_bytes());
+        personal[12..16].copy_from_slice(&5u32.to_le_bytes());
+        let got = kernel_digest(&personal, 60, &input, &nonce, 0);
+        let want = reference(&input, &nonce, 0);
+        assert_eq!(got, want, "call_idx=0 mismatch");
+    }
+
+    #[test]
+    fn matches_across_many_call_indices() {
+        let input = make_input(7);
+        let nonce = make_nonce(13);
+        let mut personal = [0u8; 16];
+        personal[..8].copy_from_slice(b"ZcashPoW");
+        personal[8..12].copy_from_slice(&96u32.to_le_bytes());
+        personal[12..16].copy_from_slice(&5u32.to_le_bytes());
+        // Spread coverage: low indices, mid, near u24 boundary (where
+        // the upper byte of the index counter starts to mix in), and
+        // near u32::MAX (one-shot finalization edge cases).
+        for &idx in &[0u32, 1, 4, 5, 100, 65_535, 65_536, 26_213, 26_214, 1_000_000, u32::MAX - 1, u32::MAX] {
+            let got = kernel_digest(&personal, 60, &input, &nonce, idx);
+            let want = reference(&input, &nonce, idx);
+            assert_eq!(got, want, "call_idx={idx} mismatch");
+        }
+    }
+
+    #[test]
+    fn matches_across_different_inputs() {
+        let mut personal = [0u8; 16];
+        personal[..8].copy_from_slice(b"ZcashPoW");
+        personal[8..12].copy_from_slice(&96u32.to_le_bytes());
+        personal[12..16].copy_from_slice(&5u32.to_le_bytes());
+        for seed in 1u8..=20 {
+            let input = make_input(seed);
+            let nonce = make_nonce(seed.wrapping_add(50));
+            for idx in [0u32, 1, 13, 999] {
+                let got = kernel_digest(&personal, 60, &input, &nonce, idx);
+                let want = reference(&input, &nonce, idx);
+                assert_eq!(
+                    got, want,
+                    "seed={seed} idx={idx} mismatch"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn leaves_function_matches_reference_at_full_width() {
+        let input = make_input(7);
+        let nonce = make_nonce(13);
+        let n_leaves: u32 = 1 << 17; // full Equihash 96,5 width
+        let shader_out = leaves(&input, &nonce, n_leaves);
+        // Compare leaf-by-leaf to the reference.
+        for leaf_idx in (0..n_leaves).step_by(257) {
+            let call_idx = leaf_idx / 5;
+            let k = (leaf_idx % 5) as usize;
+            let digest = reference(&input, &nonce, call_idx);
+            let want = &digest[k * 12..(k + 1) * 12];
+            let got = &shader_out[(leaf_idx as usize) * 12..((leaf_idx as usize) + 1) * 12];
+            assert_eq!(got, want, "leaf {leaf_idx} mismatch");
+        }
+    }
+}

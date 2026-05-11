@@ -211,9 +211,8 @@ export default function Page() {
         network and the retargeter responds.
       </P>
       <P>
-        A reference open-source GPU miner is on the roadmap. The intent is
-        that the same code base targets WebGPU (browser, no install) and
-        native via{" "}
+        <strong>The reference open-source GPU miner is live (v0.1).</strong>{" "}
+        Same Rust code base targets every modern GPU via{" "}
         <a
           href="https://github.com/gfx-rs/wgpu"
           target="_blank"
@@ -222,16 +221,27 @@ export default function Page() {
         >
           wgpu
         </a>
-        , so anyone with a modern GPU can compete on the same footing as
-        anyone running private accelerated code. Until that ships, the CLI
-        miner's multi-threaded solver is the fastest officially-supported
-        path.
+        : Metal on macOS, Vulkan on Linux/Windows, DX12 on Windows. The
+        v0.1 release is hybrid — GPU runs the BLAKE2b leaf-generation
+        pass (~70% of solver time on CPU), CPU still runs Wagner rounds.
+        v0.2 onward moves Wagner to GPU and adds WebGPU support for the
+        browser miner. Source at{" "}
+        <a
+          href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
+          target="_blank"
+          rel="noreferrer noopener"
+          className="text-[var(--color-rose)] hover:underline"
+        >
+          clients/gpu-miner
+        </a>
+        .
       </P>
       <P>
         Worth noting: protocol parameters can't change after{" "}
         <Code>renounce_admin</Code> ran, so we can't &quot;fix&quot; GPU
         dominance by tightening Equihash params later. The protocol commits
-        to 96,5 forever; the rest is a software question.
+        to 96,5 forever; the rest is a software question, and the answer
+        is to make every accelerated implementation open.
       </P>
     </DocsLayout>
   );

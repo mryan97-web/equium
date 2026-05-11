@@ -5,7 +5,7 @@ export function HowItWorks() {
         <SectionHeader
           kicker="How it works"
           title="Proof-of-work on Solana."
-          sub="Equihash 96,5 is memory-bound rather than compute-bound. GPU farms have no meaningful edge over a CPU, so anyone with a machine can compete on roughly equal footing."
+          sub="Equihash 96,5 is memory-bound rather than compute-bound. A GPU's edge over a multi-core CPU is bounded — typically 5-10x, not the 1000x you see with SHA-based proof-of-work. Reference CPU and GPU miners are both open source."
         />
 
         <div className="mt-16 grid md:grid-cols-3 gap-4">
