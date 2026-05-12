@@ -1,4 +1,4 @@
-FROM rust:1.81
+FROM rust:latest
 
 WORKDIR /app
 
@@ -6,4 +6,4 @@ COPY . .
 
 RUN cargo build --release
 
-CMD ["cargo", "run"]
+CMD ["cargo", "run", "--release"]
