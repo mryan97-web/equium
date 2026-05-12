@@ -111,6 +111,59 @@ pub fn build_input_block(challenge: &[u8], miner: &[u8], height: u64) -> Option<
     Some(build_input(&c, &m, height).to_vec())
 }
 
+/// Compress 32 raw u32 indices into the SPL-side packed format
+/// (cbits+1 bits per index, packed big-endian). Equihash 96,5 ⇒
+/// 17 bits × 32 indices = 544 bits = 68 bytes.
+fn compress_indices_internal(n: u32, k: u32, indices: &[u32]) -> Vec<u8> {
+    let cbits = (n / (k + 1)) as usize;
+    let bits_per = cbits + 1;
+    let total_bits = bits_per * indices.len();
+    let total_bytes = total_bits.div_ceil(8);
+    let mut out = vec![0u8; total_bytes];
+    let mut pos = 0usize;
+    for &idx in indices {
+        for b in (0..bits_per).rev() {
+            let bit = (idx >> b) & 1;
+            let byte = pos / 8;
+            let shift = 7 - (pos % 8);
+            out[byte] |= (bit as u8) << shift;
+            pos += 1;
+        }
+    }
+    out
+}
+
+/// Full-GPU path (v0.4): the browser miner runs the entire Wagner
+/// pipeline in WebGPU and hands a candidate solution (raw u32
+/// indices) back here for the cheap CPU re-validation + compression
+/// to the SPL submission format.
+///
+/// Returns the compressed solution bytes if the candidate passes the
+/// upstream `is_valid_solution` check, `null` otherwise. Mirrors the
+/// native miner's defense-in-depth before each `mine` tx.
+#[wasm_bindgen]
+pub fn validate_gpu_solution(
+    n: u32,
+    k: u32,
+    input: &[u8],
+    nonce: &[u8],
+    indices: &[u32],
+) -> Option<Vec<u8>> {
+    if input.len() != I_LEN || nonce.len() != 32 || indices.is_empty() {
+        return None;
+    }
+    let mut i_arr = [0u8; I_LEN];
+    i_arr.copy_from_slice(input);
+    let mut n_arr = [0u8; 32];
+    n_arr.copy_from_slice(nonce);
+    let compressed = compress_indices_internal(n, k, indices);
+    if equihash::is_valid_solution(n, k, &i_arr, &n_arr, &compressed).is_ok() {
+        Some(compressed)
+    } else {
+        None
+    }
+}
+
 /// WebGPU hybrid path (v0.3): the host generates leaves on the GPU,
 /// then hands them in here so the CPU does only the cheap Wagner +
 /// validation pass per nonce. `leaves` must be exactly

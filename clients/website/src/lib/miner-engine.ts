@@ -18,6 +18,9 @@ import {
   type EquiumConfig,
 } from "./program";
 import { WebGPULeaves } from "./webgpu-leaves";
+import { WebGPUWagner } from "./webgpu-wagner";
+
+export type SolverTier = "fullgpu" | "hybrid" | "cpu";
 
 export interface MinerCallbacks {
   log: (level: "info" | "ok" | "err", msg: string) => void;
@@ -37,6 +40,10 @@ export interface MinerCallbacks {
   onStatus: (
     s: "idle" | "solving" | "submitting" | "stopped" | "error"
   ) => void;
+  /** Fires once during startup with the solver tier we picked + the
+   * GPU adapter description (or "CPU" for the pure-WASM path). Lets
+   * the UI show a "Full-GPU / Hybrid / CPU" badge with adapter info. */
+  onTier?: (info: { tier: SolverTier; adapter: string }) => void;
 }
 
 export interface MinerOptions {
@@ -91,49 +98,97 @@ export function startMiner(opts: MinerOptions): MinerHandle {
   let submitting = false;
   const startedAt = Date.now();
 
-  const slots: SolverSlot[] = Array.from({ length: workerCount }, () => ({
-    worker: new Worker("/wasm/miner.worker.js", { type: "module" }),
-    busy: false,
-  }));
+  // Solver tier is decided by an async probe right after start:
+  //   v0.4 fullgpu  — WebGPU does leaves + Wagner + solution scan
+  //   v0.3 hybrid   — WebGPU does leaves only, workers run Wagner
+  //   v0.2 cpu      — pure-WASM workers
+  // Tier is committed before any solver loop dispatches, so each
+  // request only ever takes one code path.
+  let tier: SolverTier = "cpu";
+  let wagnerGpu: WebGPUWagner | null = null;
+  let leavesGpu: WebGPULeaves | null = null;
+  let slots: SolverSlot[] = [];
 
-  cb.log(
-    "info",
-    `solver pool: ${workerCount} worker${workerCount === 1 ? "" : "s"}`
-  );
-
-  // v0.3 hybrid path: probe WebGPU. If a device comes up we'll
-  // generate leaves on the GPU per nonce and ship them to workers for
-  // the cheap Wagner pass. If `init()` returns null (no navigator.gpu,
-  // adapter request failed, etc.) we silently fall back to the legacy
-  // pure-WASM path.
-  let webgpu: WebGPULeaves | null = null;
-  // Serializes GPU dispatches across workers — multiple `generate()`
-  // calls on one device would race the params buffer + staging
-  // mapAsync otherwise.
+  // Serializes hybrid-path GPU dispatches across workers — multiple
+  // `generate()` calls on one device would race the params buffer +
+  // staging mapAsync otherwise. Not used in fullgpu mode (the loop
+  // there is single-threaded by design).
   let gpuQueue: Promise<void> = Promise.resolve();
-  (async () => {
+
+  /** Tier-1 probe: try full-GPU Wagner. */
+  const probeFullGpu = async (): Promise<boolean> => {
     try {
-      webgpu = await WebGPULeaves.init();
-      if (webgpu) {
-        cb.log(
-          "ok",
-          `GPU acceleration enabled · ${webgpu.info.adapterName}${
-            webgpu.info.isFallback ? " (software fallback)" : ""
-          }`
-        );
-      } else {
-        cb.log(
-          "info",
-          "GPU unavailable — running CPU-only (WebGPU not supported in this browser)"
-        );
-      }
+      const w = await WebGPUWagner.init();
+      if (!w) return false;
+      wagnerGpu = w;
+      tier = "fullgpu";
+      cb.log(
+        "ok",
+        `Full-GPU pipeline (v0.4) · ${w.info.adapterName}${
+          w.info.isFallback ? " (software fallback)" : ""
+        }`
+      );
+      return true;
     } catch (e) {
+      cb.log("info", `full-GPU init failed: ${truncate(String(e), 80)}`);
+      return false;
+    }
+  };
+
+  /** Tier-2 probe: hybrid GPU leaves + WASM Wagner in workers. */
+  const probeHybrid = async (): Promise<boolean> => {
+    try {
+      const l = await WebGPULeaves.init();
+      if (!l) return false;
+      leavesGpu = l;
+      tier = "hybrid";
+      cb.log(
+        "ok",
+        `Hybrid GPU pipeline (v0.3) · ${l.info.adapterName}${
+          l.info.isFallback ? " (software fallback)" : ""
+        }`
+      );
+      return true;
+    } catch (e) {
+      cb.log("info", `hybrid init failed: ${truncate(String(e), 80)}`);
+      return false;
+    }
+  };
+
+  /** Spawn the CPU worker pool. Used in both hybrid and cpu tiers. */
+  const spawnWorkers = (n: number) => {
+    slots = Array.from({ length: n }, () => ({
+      worker: new Worker("/wasm/miner.worker.js", { type: "module" }),
+      busy: false,
+    }));
+    cb.log("info", `solver pool: ${n} worker${n === 1 ? "" : "s"}`);
+  };
+
+  // Run the probe sequence as soon as the miner starts. The
+  // supervisor loop waits for `tierReady` before dispatching.
+  let tierResolve: () => void;
+  const tierReady: Promise<void> = new Promise((r) => {
+    tierResolve = r;
+  });
+  (async () => {
+    if (await probeFullGpu()) {
+      // Full-GPU bypasses workers entirely.
+    } else if (await probeHybrid()) {
+      spawnWorkers(workerCount);
+    } else {
+      tier = "cpu";
       cb.log(
         "info",
-        `GPU init failed — falling back to CPU: ${truncate(String(e), 80)}`
+        "GPU unavailable — running CPU-only (WebGPU not supported here)"
       );
-      webgpu = null;
+      spawnWorkers(workerCount);
     }
+    cb.onTier?.({
+      tier,
+      adapter:
+        wagnerGpu?.info.adapterName ?? leavesGpu?.info.adapterName ?? "CPU",
+    });
+    tierResolve();
   })();
 
   const stop = () => {
@@ -141,11 +196,17 @@ export function startMiner(opts: MinerOptions): MinerHandle {
     for (const slot of slots) {
       slot.worker.terminate();
     }
-    if (webgpu) {
+    if (wagnerGpu) {
       try {
-        webgpu.destroy();
+        wagnerGpu.destroy();
       } catch {}
-      webgpu = null;
+      wagnerGpu = null;
+    }
+    if (leavesGpu) {
+      try {
+        leavesGpu.destroy();
+      } catch {}
+      leavesGpu = null;
     }
     cb.onStatus("stopped");
   };
@@ -164,7 +225,7 @@ export function startMiner(opts: MinerOptions): MinerHandle {
     });
     await prev;
     try {
-      return await webgpu!.generate(input, nonce);
+      return await leavesGpu!.generate(input, nonce);
     } finally {
       release();
     }
@@ -310,7 +371,7 @@ export function startMiner(opts: MinerOptions): MinerHandle {
 
     slot.worker.addEventListener("message", onMessage);
 
-    if (webgpu) {
+    if (tier === "hybrid" && leavesGpu) {
       // Hybrid path: generate leaves on the GPU for one random nonce,
       // hand them to the worker for Wagner. Per-nonce cost is small on
       // CPU (~ms) so workers re-dispatch frequently; the GPU is the
@@ -374,10 +435,172 @@ export function startMiner(opts: MinerOptions): MinerHandle {
     });
   };
 
+  /**
+   * Submit a candidate solution. Shared between the worker dispatch
+   * loop (hybrid + cpu) and the full-GPU loop. Manages the
+   * `submitting` flag, builds the tx, waits for confirmation, and
+   * reports the outcome via the standard callbacks.
+   *
+   * Returns true if the block was successfully mined (tx confirmed),
+   * false otherwise (above-target races, submission errors, tx lost).
+   */
+  const submitCandidate = async (
+    cfg: EquiumConfig,
+    nonce: Uint8Array,
+    solnIndices: Uint8Array
+  ): Promise<boolean> => {
+    if (submitting) return false;
+    submitting = true;
+    cb.onStatus("submitting");
+    try {
+      if (!tokenProgramCache) {
+        tokenProgramCache = await detectTokenProgram(connection, cfg.mint);
+      }
+      const tx = await buildMineTx({
+        program,
+        miner,
+        mint: cfg.mint,
+        tokenProgram: tokenProgramCache,
+        nonce,
+        solnIndices,
+      });
+      const recent = await connection.getLatestBlockhash("confirmed");
+      tx.recentBlockhash = recent.blockhash;
+      tx.feePayer = miner;
+      const signed = await signTransaction(tx);
+      const sig = await connection.sendRawTransaction(signed.serialize(), {
+        skipPreflight: true,
+      });
+      const outcome = await waitForSignature(connection, sig, 90_000);
+      if (outcome.kind === "failed") {
+        throw new Error(`${outcome.reason} (${sig.slice(0, 8)}…)`);
+      }
+      if (outcome.kind === "lost") {
+        cb.log("err", `submit lost — tx didn't land within 90s`);
+        return false;
+      }
+      cb.onBlockMined({
+        height: cfg.blockHeight,
+        sig,
+        rewardBase: cfg.currentEpochReward,
+      });
+      cb.log(
+        "ok",
+        `mined block ${cfg.blockHeight.toString()} (+${formatBase(cfg.currentEpochReward)} EQM)`
+      );
+      return true;
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      cb.log("err", `submit failed: ${truncate(msg, 110)}`);
+      await sleep(600);
+      return false;
+    } finally {
+      submitting = false;
+      cb.onStatus("solving");
+    }
+  };
+
+  /**
+   * Full-GPU solver loop (v0.4). Runs concurrently with the
+   * supervisor: spins random nonces through `WebGPUWagner.runNonce`
+   * on the main thread (single-instanced — one GPU, one queue).
+   * Solutions are validated + compressed via the WASM
+   * `validate_gpu_solution` helper before any submission.
+   */
+  const fullGpuLoop = async () => {
+    // Import the WASM validator lazily — same pattern the worker uses
+    // so this code doesn't need to bundle the module at SSR time.
+    const wasm = await import(
+      /* webpackIgnore: true */ /* @vite-ignore */ "/wasm/equium_wasm.js" as any
+    );
+    await wasm.default(); // init()
+    const validate: (
+      n: number,
+      k: number,
+      input: Uint8Array,
+      nonce: Uint8Array,
+      indices: Uint32Array
+    ) => Uint8Array | undefined = wasm.validate_gpu_solution;
+
+    while (!stopped) {
+      if (!currentConfig || submitting) {
+        await sleep(50);
+        continue;
+      }
+      const cfg = currentConfig;
+      const inputBlock = buildInputBlock(
+        cfg.currentChallenge,
+        miner.toBytes(),
+        cfg.blockHeight
+      );
+      const nonce = new Uint8Array(32);
+      crypto.getRandomValues(nonce);
+
+      const t0 = performance.now();
+      let candidates: Uint32Array[];
+      try {
+        candidates = await wagnerGpu!.runNonce(inputBlock, nonce);
+      } catch (e: any) {
+        cb.log("err", `gpu wagner failed: ${truncate(String(e?.message ?? e), 80)}`);
+        await sleep(500);
+        continue;
+      }
+      const solveMs = performance.now() - t0;
+      cumulativeNonces += 1;
+      const elapsedSec = (Date.now() - startedAt) / 1000;
+
+      let aboveTarget = true;
+      for (const indices of candidates) {
+        const compressed = validate(
+          cfg.equihashN,
+          cfg.equihashK,
+          inputBlock,
+          nonce,
+          indices
+        );
+        if (!compressed) continue;
+        const candHash = await sha256(concatBytes(compressed, inputBlock));
+        if (!hashUnderTarget(candHash, cfg.currentTarget)) continue;
+        aboveTarget = false;
+        tryInRound += 1;
+        cb.onAttempt({
+          tryNum: tryInRound,
+          aboveTarget: false,
+          solveMs,
+          cumulativeNonces,
+          elapsedSec,
+        });
+        await submitCandidate(cfg, nonce, compressed);
+        break;
+      }
+
+      if (aboveTarget) {
+        tryInRound += 1;
+        cb.onAttempt({
+          tryNum: tryInRound,
+          aboveTarget: true,
+          solveMs,
+          cumulativeNonces,
+          elapsedSec,
+        });
+      }
+    }
+  };
+
   // Top-level supervisor: keep config fresh, kick idle workers, handle network
   // failures. Workers self-redispatch after each result so this loop only
   // intervenes when config changes or things go wrong.
   (async () => {
+    await tierReady;
+    // TS narrows `tier` to its initial literal "cpu" because the
+    // probe IIFE is opaque to control-flow analysis. Cast through
+    // string so we can compare against the live value.
+    if ((tier as string) === "fullgpu") {
+      // Detach the GPU solver loop — supervisor below just polls
+      // config + handles empty rounds.
+      void fullGpuLoop();
+    }
+
     let lastHeight = -1n;
     let lastHeightChangeAt = Date.now();
     let lastAdvanceAttemptAt = 0;
@@ -443,7 +666,9 @@ export function startMiner(opts: MinerOptions): MinerHandle {
 
         cb.onStatus("solving");
 
-        // Kick any idle workers onto the current config.
+        // Kick any idle workers onto the current config. In fullgpu
+        // tier, `slots` is empty and the GPU loop drives mining
+        // directly.
         for (const slot of slots) {
           if (!slot.busy && !submitting) {
             dispatchTo(slot, cfg);

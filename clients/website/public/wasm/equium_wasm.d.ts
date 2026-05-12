@@ -50,6 +50,18 @@ export function solve_block(n: number, k: number, challenge: Uint8Array, miner: 
  */
 export function try_nonce_with_leaves(n: number, k: number, input: Uint8Array, nonce: Uint8Array, leaves: Uint8Array): Uint8Array | undefined;
 
+/**
+ * Full-GPU path (v0.4): the browser miner runs the entire Wagner
+ * pipeline in WebGPU and hands a candidate solution (raw u32
+ * indices) back here for the cheap CPU re-validation + compression
+ * to the SPL submission format.
+ *
+ * Returns the compressed solution bytes if the candidate passes the
+ * upstream `is_valid_solution` check, `null` otherwise. Mirrors the
+ * native miner's defense-in-depth before each `mine` tx.
+ */
+export function validate_gpu_solution(n: number, k: number, input: Uint8Array, nonce: Uint8Array, indices: Uint32Array): Uint8Array | undefined;
+
 export function version(): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -63,6 +75,7 @@ export interface InitOutput {
     readonly solve_block: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint, h: number, i: number, j: number) => number;
     readonly solution_hash: (a: number, b: number, c: number, d: number) => [number, number];
     readonly build_input_block: (a: number, b: number, c: number, d: number, e: bigint) => [number, number];
+    readonly validate_gpu_solution: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly try_nonce_with_leaves: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly version: () => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;

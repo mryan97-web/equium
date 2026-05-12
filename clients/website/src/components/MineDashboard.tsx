@@ -67,6 +67,10 @@ export function MineDashboard() {
     "idle" | "solving" | "submitting" | "stopped" | "error"
   >("idle");
   const [stats, setStats] = useState<SessionStats>(INITIAL_STATS);
+  const [tier, setTier] = useState<{
+    tier: "fullgpu" | "hybrid" | "cpu";
+    adapter: string;
+  } | null>(null);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
@@ -176,6 +180,7 @@ export function MineDashboard() {
             tryInRound: 0,
           }));
         },
+        onTier: (info) => setTier(info),
       },
     });
   };
@@ -242,6 +247,7 @@ export function MineDashboard() {
         running={running}
         status={status}
         config={config}
+        tier={tier}
       />
 
       <CoresPicker
@@ -440,12 +446,28 @@ function LiveStats({
   running,
   status,
   config,
+  tier,
 }: {
   stats: SessionStats;
   running: boolean;
   status: string;
   config: EquiumConfig | null;
+  tier: { tier: "fullgpu" | "hybrid" | "cpu"; adapter: string } | null;
 }) {
+  const tierLabel = tier
+    ? tier.tier === "fullgpu"
+      ? "Full-GPU"
+      : tier.tier === "hybrid"
+        ? "Hybrid GPU"
+        : "CPU"
+    : null;
+  const tierAccent = tier
+    ? tier.tier === "fullgpu"
+      ? "var(--color-mint)"
+      : tier.tier === "hybrid"
+        ? "var(--color-rose)"
+        : "var(--color-fg-dim)"
+    : "var(--color-fg-dim)";
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
       <BigStat
@@ -509,6 +531,39 @@ function LiveStats({
           </div>
         </div>
       </div>
+      {tier && (
+        <div
+          className="col-span-2 md:col-span-4 -mt-1 flex items-center justify-between gap-3 rounded-2xl border bg-[var(--color-bg-elev)] px-5 py-2.5"
+          style={{ borderColor: tierAccent + "40" }}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <span
+              className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-[0.18em]"
+              style={{
+                color: tierAccent,
+                background: tierAccent + "1a",
+                borderColor: tierAccent + "60",
+              }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: tierAccent }}
+              />
+              {tierLabel}
+            </span>
+            <span className="text-[12px] text-[var(--color-fg-dim)] truncate font-mono">
+              {tier.adapter || "—"}
+            </span>
+          </div>
+          <span className="text-[10px] font-mono text-[var(--color-fg-faint)] hidden sm:inline">
+            {tier.tier === "fullgpu"
+              ? "v0.4 · leaves + Wagner on GPU"
+              : tier.tier === "hybrid"
+                ? "v0.3 · GPU leaves + CPU Wagner"
+                : "WebGPU unavailable"}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

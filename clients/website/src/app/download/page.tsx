@@ -319,9 +319,10 @@ cargo build --release -p equium-gpu-miner
               v0.1 hybrid (GPU leaves + CPU Wagner) is the default and
               battle-tested. v0.2 full-GPU is shipping for early
               testers — run <Code>verify-rounds</Code> and report any
-              disagreement before relying on it. v0.3 ships the same{" "}
-              <Code>leaves.wgsl</Code> kernel in the browser miner via
-              WebGPU.{" "}
+              disagreement before relying on it. v0.3 + v0.4 bring
+              the same WGSL kernels to the browser miner via WebGPU,
+              with an automatic three-tier fallback (Full-GPU →
+              Hybrid → CPU) per browser capability.{" "}
               <a
                 href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
                 className="text-[var(--color-rose)] hover:underline"

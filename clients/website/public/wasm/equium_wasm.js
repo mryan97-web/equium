@@ -151,6 +151,38 @@ export function try_nonce_with_leaves(n, k, input, nonce, leaves) {
 }
 
 /**
+ * Full-GPU path (v0.4): the browser miner runs the entire Wagner
+ * pipeline in WebGPU and hands a candidate solution (raw u32
+ * indices) back here for the cheap CPU re-validation + compression
+ * to the SPL submission format.
+ *
+ * Returns the compressed solution bytes if the candidate passes the
+ * upstream `is_valid_solution` check, `null` otherwise. Mirrors the
+ * native miner's defense-in-depth before each `mine` tx.
+ * @param {number} n
+ * @param {number} k
+ * @param {Uint8Array} input
+ * @param {Uint8Array} nonce
+ * @param {Uint32Array} indices
+ * @returns {Uint8Array | undefined}
+ */
+export function validate_gpu_solution(n, k, input, nonce, indices) {
+    const ptr0 = passArray8ToWasm0(input, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(nonce, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray32ToWasm0(indices, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.validate_gpu_solution(n, k, ptr0, len0, ptr1, len1, ptr2, len2);
+    let v4;
+    if (ret[0] !== 0) {
+        v4 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+    }
+    return v4;
+}
+
+/**
  * @returns {string}
  */
 export function version() {
@@ -200,12 +232,27 @@ function getStringFromWasm0(ptr, len) {
     return decodeText(ptr >>> 0, len);
 }
 
+let cachedUint32ArrayMemory0 = null;
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
+}
+
 let cachedUint8ArrayMemory0 = null;
 function getUint8ArrayMemory0() {
     if (cachedUint8ArrayMemory0 === null || cachedUint8ArrayMemory0.byteLength === 0) {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function passArray32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getUint32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passArray8ToWasm0(arg, malloc) {
@@ -236,6 +283,7 @@ function __wbg_finalize_init(instance, module) {
     wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

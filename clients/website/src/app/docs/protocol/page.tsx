@@ -226,9 +226,11 @@ export default function Page() {
         full (96, 5) width; the WGSL shaders match the validated Rust
         port byte-for-byte. v0.3 ships the same{" "}
         <Code>leaves.wgsl</Code> kernel in the browser miner via
-        WebGPU — when your browser exposes <Code>navigator.gpu</Code>,
-        leaves are generated on-device and only the CPU Wagner pass
-        runs in workers. Source at{" "}
+        WebGPU. v0.4 ships the entire pipeline (leaves +{" "}
+        <Code>rounds.wgsl</Code> + solution scan) on-device — the
+        browser miner now matches the native <Code>--full-gpu</Code>
+        path, with a three-tier fallback (Full-GPU → Hybrid → CPU)
+        per browser capability. Source at{" "}
         <a
           href="https://github.com/HannaPrints/equium/tree/master/clients/gpu-miner"
           target="_blank"
